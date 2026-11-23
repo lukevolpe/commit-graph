@@ -1,0 +1,416 @@
+{
+  "name": "commit-graph",
+  "displayName": "Commit Graph",
+  "description": "A free, simple git commit graph for VS Code.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "SCM Providers"
+  ],
+  "main": "./out/src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "commitGraph.show",
+        "title": "Show Commit Graph",
+        "category": "Commit Graph",
+        "icon": "$(git-commit)"
+      },
+      {
+        "command": "commitGraph.fetch",
+        "title": "Fetch All Remotes",
+        "category": "Commit Graph",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "commitGraph.copySha",
+        "title": "Copy Commit SHA",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.copyMessage",
+        "title": "Copy Commit Message",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.copyRefName",
+        "title": "Copy Name",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.checkoutCommit",
+        "title": "Checkout (Detached)",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.createBranch",
+        "title": "Create Branch Here…",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.createTag",
+        "title": "Create Tag Here…",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.cherryPick",
+        "title": "Cherry-pick Commit",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.merge",
+        "title": "Merge into Current Branch…",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.rebase",
+        "title": "Rebase Current Branch onto This…",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.revert",
+        "title": "Revert Commit",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.reset",
+        "title": "Reset Current Branch to Here…",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.compareWorking",
+        "title": "Compare with Working Tree",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.openOnRemote",
+        "title": "Open Commit on Remote",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.checkoutBranch",
+        "title": "Switch to Branch",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.renameBranch",
+        "title": "Rename Branch…",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.deleteBranch",
+        "title": "Delete Branch…",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.deleteTag",
+        "title": "Delete Tag…",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.openInEditor",
+        "title": "Open Commit Graph in Editor",
+        "category": "Commit Graph",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "commitGraph.switchRepo",
+        "title": "Switch Repository…",
+        "category": "Commit Graph",
+        "icon": "$(repo)"
+      },
+      {
+        "command": "commitGraph.refresh",
+        "title": "Refresh",
+        "category": "Commit Graph",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "commitGraph.goToHead",
+        "title": "Go to HEAD",
+        "category": "Commit Graph",
+        "icon": "$(target)"
+      },
+      {
+        "command": "commitGraph.focusSearch",
+        "title": "Search Commits",
+        "category": "Commit Graph",
+        "icon": "$(search)"
+      }
+    ],
+    "menus": {
+      "scm/title": [
+        {
+          "command": "commitGraph.show",
+          "when": "scmProvider == git",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "commitGraph.copySha",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.copyMessage",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.copyRefName",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.checkoutCommit",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.createBranch",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.createTag",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.cherryPick",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.merge",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.rebase",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.revert",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.reset",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.compareWorking",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.openOnRemote",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.checkoutBranch",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.renameBranch",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.deleteBranch",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.deleteTag",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.refresh",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.goToHead",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.focusSearch",
+          "when": "false"
+        }
+      ],
+      "webview/context": [
+        {
+          "command": "commitGraph.checkoutCommit",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "group": "1_checkout@1"
+        },
+        {
+          "command": "commitGraph.createBranch",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "group": "1_checkout@2"
+        },
+        {
+          "command": "commitGraph.createTag",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "group": "1_checkout@3"
+        },
+        {
+          "command": "commitGraph.cherryPick",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "group": "2_integrate@1"
+        },
+        {
+          "command": "commitGraph.merge",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "group": "2_integrate@2"
+        },
+        {
+          "command": "commitGraph.rebase",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "group": "2_integrate@3"
+        },
+        {
+          "command": "commitGraph.revert",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "group": "2_integrate@4"
+        },
+        {
+          "command": "commitGraph.reset",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "group": "3_reset@1"
+        },
+        {
+          "command": "commitGraph.compareWorking",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "group": "4_compare@1"
+        },
+        {
+          "command": "commitGraph.openOnRemote",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "group": "4_compare@2"
+        },
+        {
+          "command": "commitGraph.copySha",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "group": "5_copy@1"
+        },
+        {
+          "command": "commitGraph.copyMessage",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "group": "5_copy@2"
+        },
+        {
+          "command": "commitGraph.checkoutBranch",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind =~ /^(branch|remote)$/ && !refCurrent",
+          "group": "1_checkout@1"
+        },
+        {
+          "command": "commitGraph.createBranch",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind == 'tag'",
+          "group": "1_checkout@2"
+        },
+        {
+          "command": "commitGraph.merge",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind =~ /^(branch|remote)$/ && !refCurrent",
+          "group": "2_integrate@1"
+        },
+        {
+          "command": "commitGraph.rebase",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind =~ /^(branch|remote)$/ && !refCurrent",
+          "group": "2_integrate@2"
+        },
+        {
+          "command": "commitGraph.renameBranch",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind == 'branch'",
+          "group": "3_manage@1"
+        },
+        {
+          "command": "commitGraph.deleteBranch",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind == 'branch' && !refCurrent",
+          "group": "3_manage@2"
+        },
+        {
+          "command": "commitGraph.deleteTag",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind == 'tag'",
+          "group": "3_manage@2"
+        },
+        {
+          "command": "commitGraph.copyRefName",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'ref'",
+          "group": "5_copy@1"
+        },
+        {
+          "command": "commitGraph.copySha",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'ref'",
+          "group": "5_copy@2"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "commitGraph.focusSearch",
+          "when": "view == commitGraph.view",
+          "group": "navigation@1"
+        },
+        {
+          "command": "commitGraph.goToHead",
+          "when": "view == commitGraph.view",
+          "group": "navigation@2"
+        },
+        {
+          "command": "commitGraph.fetch",
+          "when": "view == commitGraph.view",
+          "group": "navigation@3"
+        },
+        {
+          "command": "commitGraph.refresh",
+          "when": "view == commitGraph.view",
+          "group": "navigation@4"
+        },
+        {
+          "command": "commitGraph.openInEditor",
+          "when": "view == commitGraph.view",
+          "group": "navigation@5"
+        },
+        {
+          "command": "commitGraph.switchRepo",
+          "when": "view == commitGraph.view && workspaceFolderCount > 1",
+          "group": "navigation@6"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "commitGraph.show",
+        "key": "ctrl+alt+g",
+        "mac": "cmd+alt+g"
+      }
+    ],
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "commitGraph",
+          "title": "Commit Graph",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "commitGraph": [
+        {
+          "type": "webview",
+          "id": "commitGraph.view",
+          "name": "Commit Graph",
+          "icon": "media/icon.svg",
+          "contextualTitle": "Commit Graph"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p . && node scripts/copy-codicons.js",
+    "watch": "tsc -watch -p .",
+    "test": "npm run compile && node --test \"out/test/**/*.test.js\"",
+    "package": "npm run compile && vsce package --skip-license --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/vscode": "^1.90.0",
+    "@vscode/codicons": "^0.0.46-24",
+    "@vscode/vsce": "^4.1.1",
+    "typescript": "^7.0.2"
+  }
+}

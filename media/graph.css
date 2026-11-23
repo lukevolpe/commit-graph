@@ -1,0 +1,484 @@
+/* Commit Graph: built from VS Code theme tokens so it reads as part of the editor. */
+
+:root {
+  --graph-w: 24px;
+  --details-w: 380px;
+  --row: 26px;
+
+  /* Lane palette: theme chart colours, so light/dark/high-contrast all work. */
+  --c0: var(--vscode-charts-blue);
+  --c1: var(--vscode-charts-orange);
+  --c2: var(--vscode-charts-purple);
+  --c3: var(--vscode-charts-green);
+  --c4: var(--vscode-charts-red);
+  --c5: var(--vscode-charts-yellow);
+  --c6: var(--vscode-terminal-ansiCyan);
+  --c7: var(--vscode-terminal-ansiMagenta);
+
+  --border: var(--vscode-panel-border, var(--vscode-widget-border, transparent));
+  --muted: var(--vscode-descriptionForeground);
+  --bg: var(--vscode-editor-background);
+  --add: var(--vscode-gitDecoration-addedResourceForeground, var(--vscode-charts-green));
+  --del: var(--vscode-gitDecoration-deletedResourceForeground, var(--vscode-charts-red));
+  --mod: var(--vscode-gitDecoration-modifiedResourceForeground, var(--vscode-charts-blue));
+  --ren: var(--vscode-gitDecoration-renamedResourceForeground, var(--vscode-charts-purple));
+}
+
+.c0 { --lane: var(--c0); }
+.c1 { --lane: var(--c1); }
+.c2 { --lane: var(--c2); }
+.c3 { --lane: var(--c3); }
+.c4 { --lane: var(--c4); }
+.c5 { --lane: var(--c5); }
+.c6 { --lane: var(--c6); }
+.c7 { --lane: var(--c7); }
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  color: var(--vscode-foreground);
+  background: var(--bg);
+}
+
+body { display: flex; flex-direction: column; }
+
+code, .col-sha, .sha {
+  font-family: var(--vscode-editor-font-family);
+  font-size: calc(var(--vscode-editor-font-size, 13px) * 0.92);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+button:focus-visible, input:focus-visible, #scroller:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
+button.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  border-radius: 4px;
+  color: var(--vscode-icon-foreground);
+}
+button.icon:hover { background: var(--vscode-toolbar-hoverBackground); }
+
+.muted { color: var(--muted); }
+.spacer { flex: 1; }
+
+/* ---- progress -------------------------------------------------------------- */
+
+.progress {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 2px;
+  z-index: 10;
+  overflow: hidden;
+  pointer-events: none;
+}
+.progress.active::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 30%;
+  background: var(--vscode-progressBar-background);
+  animation: slide 1.1s cubic-bezier(.4, 0, .2, 1) infinite;
+}
+@keyframes slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(380%); }
+}
+
+/* ---- toolbar --------------------------------------------------------------- */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: min(420px, 45vw);
+  height: 26px;
+  padding: 0 2px 0 6px;
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 2px;
+}
+.search:focus-within { border-color: var(--vscode-focusBorder); }
+.search.no-results { border-color: var(--vscode-inputValidation-warningBorder, var(--vscode-focusBorder)); }
+.search > .codicon { color: var(--muted); margin-right: 4px; }
+.search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: none;
+  outline: none;
+  background: none;
+  color: var(--vscode-input-foreground);
+  font: inherit;
+}
+.search input::placeholder { color: var(--vscode-input-placeholderForeground); }
+.search .count { color: var(--muted); font-size: 0.9em; white-space: nowrap; padding: 0 4px; }
+.search button.icon { width: 20px; height: 20px; display: none; }
+.search.has-query button.icon { display: inline-flex; }
+
+.scope {
+  display: flex;
+  border: 1px solid var(--vscode-input-border, var(--border));
+  border-radius: 2px;
+  overflow: hidden;
+}
+.scope button {
+  padding: 0 10px;
+  white-space: nowrap;
+  height: 24px;
+  color: var(--muted);
+}
+.scope button + button { border-left: 1px solid var(--vscode-input-border, var(--border)); }
+.scope button:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground); }
+.scope button.active {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+
+.status { color: var(--muted); white-space: nowrap; margin-right: 4px; }
+
+/* ---- layout ---------------------------------------------------------------- */
+
+.main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.list {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  container-type: inline-size;
+}
+
+.resizer {
+  width: 4px;
+  margin: 0 -2px;
+  z-index: 2;
+  cursor: col-resize;
+  position: relative;
+}
+.resizer::after {
+  content: '';
+  position: absolute;
+  inset: 0 1px;
+  background: var(--border);
+  transition: background .1s;
+}
+.resizer:hover::after, .resizer.dragging::after { background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder)); inset: 0; }
+
+.details {
+  width: var(--details-w);
+  flex-shrink: 0;
+  overflow-y: auto;
+  position: relative;
+  background: var(--vscode-sideBar-background, var(--bg));
+}
+
+[hidden] { display: none !important; }
+
+/* ---- rows ------------------------------------------------------------------ */
+
+.row {
+  --cols: var(--graph-w) minmax(0, 1fr) 170px 110px 72px;
+  display: grid;
+  grid-template-columns: var(--cols);
+  align-items: center;
+  column-gap: 12px;
+  height: var(--row);
+  padding: 0 12px 0 4px;
+  white-space: nowrap;
+}
+.row > div { overflow: hidden; text-overflow: ellipsis; }
+
+
+.header {
+  flex-shrink: 0;
+  height: 24px;
+  color: var(--muted);
+  font-size: 0.92em;
+  border-bottom: 1px solid var(--border);
+}
+
+#scroller {
+  position: relative;
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  outline: none;
+}
+#spacer { width: 1px; }
+#rows { position: absolute; top: 0; left: 0; right: 0; will-change: transform; }
+
+#rows .row { cursor: default; }
+#rows .row:hover { background: var(--vscode-list-hoverBackground); }
+#rows .row.selected {
+  background: var(--vscode-list-inactiveSelectionBackground);
+  color: var(--vscode-list-inactiveSelectionForeground, inherit);
+}
+#scroller:focus #rows .row.selected {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground, inherit);
+}
+#scroller:focus #rows .row.selected .col-author,
+#scroller:focus #rows .row.selected .col-date,
+#scroller:focus #rows .row.selected .col-sha { color: inherit; }
+
+.row.dim > div:not(.col-graph) { opacity: 0.4; }
+.row.dim .col-graph { opacity: 0.55; }
+
+.row.head .subject { font-weight: 600; }
+.row.wip-row .subject { font-style: italic; color: var(--muted); }
+
+.col-author, .col-date, .col-sha { color: var(--muted); }
+.col-author { display: flex; align-items: center; gap: 6px; }
+.col-author span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.col-graph { height: 100%; }
+
+mark {
+  background: var(--vscode-editor-findMatchHighlightBackground);
+  color: inherit;
+  border-radius: 2px;
+}
+
+/* ---- graph ----------------------------------------------------------------- */
+
+.graph { display: block; overflow: hidden; }
+.l { fill: none; stroke: var(--lane); stroke-width: 2; stroke-linecap: round; }
+.l.wip { stroke-dasharray: 2 3; }
+.n { fill: var(--lane); }
+.n.merge { fill: var(--lane); }
+.n.ring { fill: none; stroke: var(--lane); stroke-width: 2; }
+.n.wip { fill: var(--bg); stroke: var(--lane); stroke-width: 1.5; stroke-dasharray: 2 2; }
+
+/* ---- ref labels ------------------------------------------------------------ */
+
+.refs { display: inline-flex; gap: 4px; margin-right: 8px; vertical-align: middle; }
+.ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 200px;
+  height: 18px;
+  padding: 0 6px 0 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+  color: var(--vscode-foreground);
+  background: color-mix(in srgb, var(--lane) 18%, transparent);
+  box-shadow: inset 2px 0 0 var(--lane);
+  vertical-align: middle;
+}
+.ref > span { overflow: hidden; text-overflow: ellipsis; }
+.ref .codicon { font-size: 12px; color: var(--lane); }
+.ref .codicon.sync { color: var(--muted); }
+.ref.current { font-weight: 600; background: color-mix(in srgb, var(--lane) 30%, transparent); }
+.ref.remote { background: transparent; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lane) 45%, transparent); color: var(--muted); }
+.ref.tag { background: transparent; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lane) 45%, transparent); }
+.ref.head { box-shadow: inset 0 0 0 1px var(--vscode-charts-red); background: transparent; }
+.ref.head .codicon { color: var(--vscode-charts-red); }
+.ref.more { box-shadow: none; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); padding: 0 6px; }
+
+/* ---- avatars --------------------------------------------------------------- */
+
+.av {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--vscode-foreground);
+  background: color-mix(in srgb, var(--lane) 35%, transparent);
+}
+.av.lg { width: 32px; height: 32px; font-size: 12px; }
+
+/* ---- details --------------------------------------------------------------- */
+
+.d-close { position: absolute; top: 8px; right: 8px; }
+.d-loading, .d-error { padding: 20px 16px; color: var(--muted); }
+.d-error { color: var(--vscode-errorForeground); }
+
+.d-head { padding: 14px 16px 12px; border-bottom: 1px solid var(--border); }
+.d-subject {
+  margin: 0 28px 12px 0;
+  font-size: 1.15em;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.d-meta { color: var(--muted); }
+.d-person { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; line-height: 1.45; }
+.d-person strong { font-weight: 600; }
+
+.d-ids {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  align-items: center;
+}
+.d-ids dt { color: var(--muted); }
+.d-ids dd { margin: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+
+button.link {
+  color: var(--vscode-textLink-foreground);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 2px;
+}
+button.link:hover { color: var(--vscode-textLink-activeForeground); text-decoration: underline; }
+button.link .codicon { font-size: 12px; opacity: 0.8; }
+
+.d-refs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 12px; }
+.d-refs .ref { max-width: 100%; }
+
+.d-body {
+  padding: 12px 16px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--vscode-editor-font-family);
+  font-size: calc(var(--vscode-editor-font-size, 13px) * 0.95);
+}
+.d-body a { color: var(--vscode-textLink-foreground); }
+
+.d-note {
+  padding: 8px 16px;
+  color: var(--muted);
+  font-size: 0.92em;
+  border-bottom: 1px solid var(--border);
+}
+
+.d-files-head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 16px;
+  background: var(--vscode-sideBar-background, var(--bg));
+  border-bottom: 1px solid var(--border);
+  z-index: 1;
+}
+.d-files-empty { padding: 12px 16px; }
+.add { color: var(--add); }
+.del { color: var(--del); }
+
+.d-files ul { list-style: none; margin: 0; padding: 4px 0; }
+.d-files li { display: flex; align-items: center; padding-right: 6px; }
+.d-files li:hover { background: var(--vscode-list-hoverBackground); }
+.d-files li .fopen { visibility: hidden; flex-shrink: 0; }
+.d-files li:hover .fopen, .d-files li .fopen:focus-visible { visibility: visible; }
+
+button.file {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  padding: 0 4px 0 16px;
+  text-align: left;
+  white-space: nowrap;
+}
+.fname { flex-shrink: 0; max-width: 60%; overflow: hidden; text-overflow: ellipsis; }
+.fdir { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 0.92em; }
+.fstat { display: flex; gap: 6px; font-size: 0.9em; flex-shrink: 0; font-family: var(--vscode-editor-font-family); }
+
+.st {
+  width: 14px;
+  flex-shrink: 0;
+  text-align: center;
+  font-weight: 700;
+  font-size: 0.85em;
+  font-family: var(--vscode-editor-font-family);
+}
+.st-A { color: var(--add); }
+.st-D { color: var(--del); }
+.st-M, .st-T { color: var(--mod); }
+.st-R, .st-C { color: var(--ren); }
+.st-U { color: var(--vscode-gitDecoration-conflictingResourceForeground, var(--vscode-charts-red)); }
+
+/* ---- empty state ----------------------------------------------------------- */
+
+.empty {
+  position: absolute;
+  inset: 25px 0 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  padding: 24px;
+  text-align: center;
+}
+.empty.error { color: var(--vscode-errorForeground); }
+
+/* ---- narrow list: drop columns (last, so it wins over the column rules) ---- */
+
+@container (max-width: 760px) {
+  .row { --cols: var(--graph-w) minmax(0, 1fr) 90px 64px; }
+  .row .col-author { display: none; }
+}
+@container (max-width: 520px) {
+  .row { --cols: var(--graph-w) minmax(0, 1fr) 64px; }
+  .row .col-date { display: none; }
+}
+@media (max-width: 640px) {
+  .status { display: none; }
+}
+
+/* ---- hosts ------------------------------------------------------------------ */
+
+/* In a view, refresh / fetch / go-to-HEAD live in the view's own title bar. */
+.host-view #refresh, .host-view #fetch, .host-view #go-head { display: none; }
+
+/* ---- narrow (e.g. dragged into a sidebar): stack details under the list ------ */
+
+@media (max-width: 600px) {
+  .main { flex-direction: column; }
+  .details { width: auto; height: var(--details-h, 45%); flex-shrink: 0; }
+  .resizer { width: auto; height: 4px; margin: -2px 0; cursor: row-resize; }
+  .resizer::after { inset: 1px 0; }
+  .resizer:hover::after, .resizer.dragging::after { inset: 0; }
+  .toolbar { gap: 6px; padding: 6px; }
+  .search { width: auto; flex: 1; min-width: 0; }
+  .scope .long { display: none; }
+  .scope button { padding: 0 8px; }
+  .spacer { display: none; }
+}
