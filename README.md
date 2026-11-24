@@ -12,6 +12,10 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - **Right-click a commit**: checkout, create branch or tag, cherry-pick, merge, rebase, revert, reset, compare with working tree, open on GitHub/GitLab/Bitbucket, copy SHA or message
 - **Right-click a label**: switch to it, merge, rebase onto it, rename, delete, copy name
 - **Sync**: ↓ pull and ↑ push counts in the toolbar (hover to preview the commits; Publish when a branch has no upstream); unpushed ↑ and unpulled ↓ commits marked in the Commit column; branch labels show ↓1↑2 or ⚠ when the upstream was deleted
+- **Pull requests**: right-click a branch label → Create Pull Request… opens the GitHub, GitLab or Bitbucket compare page against the remote's default branch; an unpublished or unpushed branch is offered a push first. No sign-in, just the browser
+- **Force push**: when a push is rejected because the remote moved on, offers Force Push (with lease), which still refuses if the remote changed since your last fetch
+- **Remote refs**: right-click a tag → Push Tag or Delete Tag on Remote; right-click a remote branch → Fetch Remote (just that remote) or Delete Remote Branch
+- **Remotes**: **Commit Graph: Manage Remotes** (also in the view's `…` menu) lists remotes with their URLs; add, rename, remove, fetch or prune one
 - **Highlight a branch**: hover a label to light its line down to where it forked from your branch; right-click → Highlight Branch Line (or select a commit and press L) to pin it; Esc or the chip clears it
 - **Stashes**: each stash shows as a row just above the commit it was made on, with a hollow square and a muted `stash@{n}` label; click for its message and files (untracked too), right-click to apply, pop or drop. Stashes on commits hidden by scope or not loaded yet stay hidden until their base is shown
 - **Search** (Ctrl+F): message, author, email or SHA, across all history; non-matches dim in place; Enter / Shift+Enter or F3 step through matches. Terms combine (all must match): `author:ada` or `author:"Ada L"`, `message:fix`, `file:src/git.ts` or `file:*.css`, `after:2026-01-01` / `before:2026-06-01` / `after:2w`, `type:merge` / `type:nonmerge`, `#abc123` or `sha:abc123`
@@ -42,5 +46,6 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - `src/hosts.ts`: editor tab and panel/sidebar view hosts
 - `src/repos.ts`: picks which repository to show
 - `src/actions.ts`: right-click menu actions
+- `src/remotes.ts`: remotes, default branch, pull request URLs (unit tested)
 - `src/content.ts`: read-only "file at revision" documents for diffs
 - `media/graph.js`, `media/graph.css`: webview UI

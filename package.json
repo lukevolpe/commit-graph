@@ -187,6 +187,37 @@
         "command": "commitGraph.dropStash",
         "title": "Drop Stash…",
         "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.createPullRequest",
+        "title": "Create Pull Request…",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.pushTag",
+        "title": "Push Tag",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.deleteRemoteTag",
+        "title": "Delete Tag on Remote…",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.deleteRemoteBranch",
+        "title": "Delete Remote Branch…",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.fetchRemote",
+        "title": "Fetch Remote",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.manageRemotes",
+        "title": "Manage Remotes…",
+        "category": "Commit Graph",
+        "icon": "$(remote)"
       }
     ],
     "menus": {
@@ -304,6 +335,26 @@
         },
         {
           "command": "commitGraph.dropStash",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.createPullRequest",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.pushTag",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.deleteRemoteTag",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.deleteRemoteBranch",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.fetchRemote",
           "when": "false"
         }
       ],
@@ -452,6 +503,31 @@
           "command": "commitGraph.copySha",
           "when": "webviewId == 'commitGraph' && webviewSection == 'stash'",
           "group": "5_copy@1"
+        },
+        {
+          "command": "commitGraph.createPullRequest",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind =~ /^(branch|remote)$/",
+          "group": "4_remote@1"
+        },
+        {
+          "command": "commitGraph.fetchRemote",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind == 'remote'",
+          "group": "4_remote@2"
+        },
+        {
+          "command": "commitGraph.deleteRemoteBranch",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind == 'remote'",
+          "group": "3_manage@3"
+        },
+        {
+          "command": "commitGraph.pushTag",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind == 'tag'",
+          "group": "4_remote@1"
+        },
+        {
+          "command": "commitGraph.deleteRemoteTag",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind == 'tag'",
+          "group": "4_remote@2"
         }
       ],
       "view/title": [
@@ -484,6 +560,11 @@
           "command": "commitGraph.switchRepo",
           "when": "view == commitGraph.view && workspaceFolderCount > 1",
           "group": "navigation@6"
+        },
+        {
+          "command": "commitGraph.manageRemotes",
+          "when": "view == commitGraph.view",
+          "group": "1_remotes@1"
         }
       ]
     },
