@@ -8,6 +8,7 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - **Labels**: branches, tags and remotes; a local branch in sync with its remote shows as one label with a cloud icon
 - **Details**: click a commit to see its full message, author, parents and changed files with +/− counts
 - **Diffs**: click a file for VS Code's diff view; the multi-diff icon (or Enter / double-click) opens every change
+- **Compare two commits**: select one, Ctrl/Cmd+click another (or right-click → Compare with Selected) to list every file changed between them; click a file or press Enter for the diffs, Esc to exit
 - **Right-click a commit**: checkout, create branch or tag, cherry-pick, merge, rebase, revert, reset, compare with working tree, open on GitHub/GitLab/Bitbucket, copy SHA or message
 - **Right-click a label**: switch to it, merge, rebase onto it, rename, delete, copy name
 - **Sync**: ↓ pull and ↑ push counts in the toolbar (hover to preview the commits; Publish when a branch has no upstream); unpushed ↑ and unpulled ↓ commits marked in the Commit column; branch labels show ↓1↑2 or ⚠ when the upstream was deleted
@@ -15,7 +16,7 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - **Search** (Ctrl+F): message, author, email or SHA, across all history; Enter / Shift+Enter or F3 step through matches
 - **Scope**: all branches, or the current branch only
 - **Live**: refreshes on commits, checkouts, fetches and file saves; history loads 500 commits at a time
-- **Keys**: ↑ ↓ PgUp PgDn Home End to move, Enter to open changes, Ctrl+C to copy SHA, L to highlight the line, Esc to close details or clear the highlight
+- **Keys**: ↑ ↓ PgUp PgDn Home End to move, Enter to open changes, Ctrl+C to copy SHA, Ctrl+click to compare, L to highlight the line, Esc to close details or clear the highlight
 
 ## Where it lives
 

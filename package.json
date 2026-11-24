@@ -87,6 +87,11 @@
         "category": "Commit Graph"
       },
       {
+        "command": "commitGraph.compareWithSelected",
+        "title": "Compare with Selected",
+        "category": "Commit Graph"
+      },
+      {
         "command": "commitGraph.openOnRemote",
         "title": "Open Commit on Remote",
         "category": "Commit Graph"
@@ -227,6 +232,10 @@
           "when": "false"
         },
         {
+          "command": "commitGraph.compareWithSelected",
+          "when": "false"
+        },
+        {
           "command": "commitGraph.openOnRemote",
           "when": "false"
         },
@@ -316,6 +325,11 @@
           "command": "commitGraph.compareWorking",
           "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
           "group": "4_compare@1"
+        },
+        {
+          "command": "commitGraph.compareWithSelected",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'commit' && canCompare",
+          "group": "4_compare@0"
         },
         {
           "command": "commitGraph.openOnRemote",

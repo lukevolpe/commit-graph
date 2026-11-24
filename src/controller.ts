@@ -7,6 +7,7 @@ import {
   Scope,
   SearchEntry,
   SyncState,
+  getChanges,
   getDetails,
   getHead,
   getLog,
@@ -32,6 +33,9 @@ type InMessage =
   | { type: 'openDiff'; hash: string; parent: string | null; file: FileChange }
   | { type: 'openAll'; hash: string; parent: string | null; files: FileChange[] }
   | { type: 'openFile'; path: string }
+  | { type: 'compare'; from: string; to: string }
+  | { type: 'openCompareDiff'; from: string; to: string; file: FileChange }
+  | { type: 'openCompareAll'; from: string; to: string; files: FileChange[] }
   | { type: 'search'; query: string }
   | { type: 'setScope'; scope: Scope }
   | { type: 'fetch' }
@@ -71,6 +75,7 @@ export class GraphController {
   private searchIndex: Promise<SearchEntry[]> | undefined;
   private lastQuery = '';
   private detailsSeq = 0;
+  private compareSeq = 0;
   /** Serializes loads so pages never interleave. */
   private queue: Promise<unknown> = Promise.resolve();
   private disposables: vscode.Disposable[] = [];
@@ -220,6 +225,15 @@ export class GraphController {
       case 'openFile':
         void vscode.window.showTextDocument(vscode.Uri.file(path.join(this.repo, msg.path)), { preview: true });
         break;
+      case 'compare':
+        void this.sendCompare(msg.from, msg.to);
+        break;
+      case 'openCompareDiff':
+        void this.openCompareDiff(msg.from, msg.to, msg.file);
+        break;
+      case 'openCompareAll':
+        void this.openCompareAll(msg.from, msg.to, msg.files);
+        break;
       case 'search':
         void this.runSearch(msg.query);
         break;
@@ -365,6 +379,39 @@ export class GraphController {
     });
     const title = hash === WIP ? 'Uncommitted Changes' : `Changes in ${hash.slice(0, 7)}`;
     await vscode.commands.executeCommand('vscode.changes', title, resources);
+  }
+
+  // ---- compare two commits -------------------------------------------------
+  // `from` is the older side, `to` the newer; `to` may be WIP (the working tree).
+
+  private async sendCompare(from: string, to: string): Promise<void> {
+    const seq = ++this.compareSeq;
+    try {
+      const files = await getChanges(this.repo, from, to === WIP ? undefined : to);
+      if (seq === this.compareSeq) this.post({ type: 'compare', from, to, files });
+    } catch (e) {
+      if (seq === this.compareSeq) this.post({ type: 'compare', from, to, error: errorText(e) });
+    }
+  }
+
+  private compareLabel(from: string, to: string): string {
+    return `${from.slice(0, 7)} ↔ ${to === WIP ? 'Working Tree' : to.slice(0, 7)}`;
+  }
+
+  private async openCompareDiff(from: string, to: string, f: FileChange): Promise<void> {
+    const [left, right] = this.diffSides(to, from, f);
+    const name = path.posix.basename(f.path);
+    await vscode.commands.executeCommand('vscode.diff', left, right, `${name} (${this.compareLabel(from, to)})`, {
+      preview: true,
+    });
+  }
+
+  private async openCompareAll(from: string, to: string, files: FileChange[]): Promise<void> {
+    const resources = files.map((f) => {
+      const [left, right] = this.diffSides(to, from, f);
+      return [vscode.Uri.file(path.join(this.repo, f.path)), left, right];
+    });
+    await vscode.commands.executeCommand('vscode.changes', this.compareLabel(from, to), resources);
   }
 
   // ---- search --------------------------------------------------------------

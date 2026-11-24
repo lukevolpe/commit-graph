@@ -53,6 +53,8 @@
     hover: -1,
     /** Bumped whenever rows change, to invalidate the cached focus. */
     rowsVersion: 0,
+    /** Compare mode: { base, other, from, to, files, error }; active only while base is selected. */
+    cmp: null,
   };
   const layout = JSON.parse(document.body.dataset.layout || '{}');
   setDetailsWidth(layout.width || saved.detailsWidth || 380);
@@ -99,6 +101,16 @@
           state.pendingReveal = null;
           if (state.index.has(m.hash)) select(m.hash, { center: true });
         }
+        break;
+      case 'compare':
+        if (state.cmp && state.cmp.from === m.from && state.cmp.to === m.to) {
+          state.cmp.files = m.files || null;
+          state.cmp.error = m.error || null;
+          renderDetails();
+        }
+        break;
+      case 'compareWith':
+        startCompare(m.sha);
         break;
       case 'highlight':
         setPin(m.ref ? { ref: m.ref } : m.sha ? { sha: m.sha } : null);
@@ -208,6 +220,7 @@
     body.style.transform = `translateY(${start * ROW}px)`;
     const f = activeFocus();
     scroller.classList.toggle('focusing', !!f);
+    scroller.classList.toggle('comparing', compareActive());
     let html = '';
     for (let i = start; i < end; i++) html += rowHtml(state.rows[i], i, f);
     body.innerHTML = html;
@@ -252,7 +265,8 @@
     const sel = r.hash === state.selected;
     const dim = state.query && !state.matchSet.has(r.hash);
     const off = !!f && !f.marks.get(i)?.node;
-    const cls = ['row', sel && 'selected', dim && 'dim', off && 'off', r.hash === state.head && 'head', r.wip && 'wip-row']
+    const cmpRow = compareActive() && r.hash === state.cmp.other;
+    const cls = ['row', sel && 'selected', cmpRow && 'compare', dim && 'dim', off && 'off', r.hash === state.head && 'head', r.wip && 'wip-row']
       .filter(Boolean)
       .join(' ');
     const pinned = focusInfo();
@@ -262,6 +276,7 @@
           webviewSection: 'commit',
           sha: r.hash,
           highlighted: !!pinned && !!pinned.marks.get(i)?.node,
+          canCompare: !!state.selected && state.selected !== r.hash,
           preventDefaultContextMenuItems: true,
         };
     const color = r.graph.color % COLORS;
@@ -534,6 +549,7 @@ ${author}
     detailsEl.hidden = !open;
     resizer.hidden = !open;
     if (!open) return;
+    if (compareActive()) return renderCompare();
     if (state.detailsError) {
       detailsEl.innerHTML = `${closeBtn()}<div class="d-error">${esc(state.detailsError)}</div>`;
       return;
@@ -660,6 +676,104 @@ ${filesHtml(d)}`;
     renderDetails();
     render();
   }
+
+  // ---- compare two commits ------------------------------------------------------
+  // Ctrl/Cmd+click (or right-click → Compare with Selected) a second row while one is
+  // selected. The diff runs older → newer by row order; Esc or a plain click exits.
+
+  function compareActive() {
+    const c = state.cmp;
+    if (c && c.base !== state.selected) state.cmp = null; // selection moved on
+    return !!c && c.base === state.selected && state.index.has(c.from) && state.index.has(c.to);
+  }
+
+  function startCompare(other) {
+    const base = state.selected;
+    if (!base || other === base || !state.index.has(other) || !state.index.has(base)) return;
+    const older = state.index.get(other) > state.index.get(base);
+    const from = older ? other : base;
+    const to = older ? base : other;
+    state.cmp = { base, other, from, to, files: null, error: null };
+    post('compare', { from, to });
+    renderDetails();
+    render();
+  }
+
+  function exitCompare() {
+    if (!state.cmp) return;
+    state.cmp = null;
+    renderDetails();
+    render();
+  }
+
+  function compareSide(hash) {
+    const r = state.rows[state.index.get(hash)];
+    if (r.wip) return `<div class="d-cmp-side"><i class="codicon codicon-edit"></i><span class="muted">Working tree</span></div>`;
+    return `<div class="d-cmp-side"><button class="link sha" data-goto="${hash}" title="Go to ${hash}">${hash.slice(0, 7)}</button><span class="d-cmp-subject" title="${esc(r.subject)}">${esc(r.subject)}</span></div>`;
+  }
+
+  function renderCompare() {
+    const c = state.cmp;
+    const label = (h) => (h === WIP ? 'working tree' : h.slice(0, 7));
+    const head = `${closeBtn()}
+<div class="d-head">
+  <h2 class="d-subject"><i class="codicon codicon-git-compare"></i> <code>${label(c.from)}</code> … <code>${label(c.to)}</code></h2>
+  <div class="d-cmp">${compareSide(c.from)}<i class="codicon codicon-arrow-down d-cmp-arrow"></i>${compareSide(c.to)}</div>
+  <div class="d-meta d-cmp-hint">Esc or click a commit to exit</div>
+</div>`;
+    if (c.error) detailsEl.innerHTML = `${head}<div class="d-error">${esc(c.error)}</div>`;
+    else if (!c.files) detailsEl.innerHTML = `${head}<div class="d-loading">Loading…</div>`;
+    else detailsEl.innerHTML = head + filesHtml(c);
+  }
+
+  // Capture phase: runs before the commit-details handlers below and takes over in compare mode.
+  detailsEl.addEventListener(
+    'click',
+    (e) => {
+      if (!compareActive() || !state.cmp.files) return;
+      const t = /** @type {HTMLElement} */ (e.target).closest('[data-file],[data-open],[data-open-all]');
+      if (!t) return;
+      e.stopPropagation();
+      const c = state.cmp;
+      if (t.hasAttribute('data-file')) post('openCompareDiff', { from: c.from, to: c.to, file: c.files[Number(t.dataset.file)] });
+      else if (t.hasAttribute('data-open')) post('openFile', { path: c.files[Number(t.dataset.open)].path });
+      else post('openCompareAll', { from: c.from, to: c.to, files: c.files });
+    },
+    true,
+  );
+
+  body.addEventListener(
+    'mousedown',
+    (e) => {
+      const row = /** @type {HTMLElement} */ (e.target).closest('.row');
+      const r = row && state.rows[Number(row.dataset.i)];
+      if (!r || !state.selected) return;
+      if (e.button === 2) {
+        // Right-click keeps the selection so "Compare with Selected" has something to compare with.
+        if (r.hash !== state.selected) e.stopPropagation();
+      } else if (e.button === 0 && (e.ctrlKey || e.metaKey)) {
+        e.stopPropagation();
+        if (r.hash !== state.selected) startCompare(r.hash);
+      } else if (e.button === 0) {
+        exitCompare();
+      }
+    },
+    true,
+  );
+
+  scroller.addEventListener(
+    'keydown',
+    (e) => {
+      if (!compareActive()) return;
+      const c = state.cmp;
+      if (e.key === 'Escape') exitCompare();
+      else if (e.key === 'Enter' && c.files && c.files.length) post('openCompareAll', { from: c.from, to: c.to, files: c.files });
+      else return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    },
+    true,
+  );
 
   // ---- selection & navigation -------------------------------------------------
 

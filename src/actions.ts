@@ -268,6 +268,7 @@ const handlers: Record<string, Handler> = {
   highlightRef: async (_r, { refName }, p) => p.post({ type: 'highlight', ref: refName }),
   highlightLane: async (_r, { sha }, p) => p.post({ type: 'highlight', sha }),
   clearHighlight: async (_r, _ctx, p) => p.post({ type: 'highlight' }),
+  compareWithSelected: async (_r, { sha }, p) => p.post({ type: 'compareWith', sha }),
 
   deleteTag: async (repo, { refName }, p) => {
     if (await confirm(`Delete tag ${refName}?`, 'Only the local tag is deleted.', 'Delete')) {
