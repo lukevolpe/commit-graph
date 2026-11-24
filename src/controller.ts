@@ -8,6 +8,8 @@ import {
   SearchEntry,
   Stash,
   SyncState,
+  commit,
+  discard,
   getChanges,
   getDetails,
   getFileMatches,
@@ -16,23 +18,30 @@ import {
   getSearchIndex,
   getStashDetails,
   getStashes,
+  getStatus,
   getSync,
   getWorkingChanges,
   git,
   gitDirs,
   insertStashes,
+  lastMessage,
   search,
+  Operation,
+  getOperation,
+  stage,
+  unstage,
 } from './git';
 import { GraphLayout, GraphRow } from './lanes';
-import { revisionUri } from './content';
+import { indexUri, revisionUri } from './content';
 import { SEARCH_HELP, parseQuery } from './search';
+import { getWorktrees, samePath } from './worktrees';
 
 const PAGE = 500;
 /** Hash used for the uncommitted-changes row. */
 export const WIP = 'WORKING_TREE';
 
 type InMessage =
-  | { type: 'ready' }
+  | { type: 'ready'; history?: string | null }
   | { type: 'refresh' }
   | { type: 'loadMore' }
   | { type: 'loadUntil'; hash: string }
@@ -50,7 +59,14 @@ type InMessage =
   | { type: 'push' }
   | { type: 'copy'; text: string; label: string }
   | { type: 'pickRef' }
-  | { type: 'layout'; width: number; height: number };
+  | { type: 'dropRef'; refName: string; refKind: 'branch' | 'remote'; onto?: string; sha?: string }
+  | { type: 'undo' }
+  | { type: 'layout'; width: number; height: number }
+  | { type: 'setHistory'; file: string | null }
+  | { type: 'operation'; action: 'Continue' | 'Skip' | 'Abort' | 'BisectGood' | 'BisectBad' }
+  | { type: 'stage' | 'unstage' | 'discard'; files: FileChange[] }
+  | { type: 'commit'; message: string; amend: boolean }
+  | { type: 'openStatusDiff'; file: FileChange; staged: boolean };
 
 type Row = Commit & { graph: GraphRow; wip?: boolean; stash?: string };
 
@@ -82,6 +98,11 @@ export class GraphController {
   private stashes: Stash[] = [];
   private done = false;
   private scope: Scope;
+  /** File history mode: repo-relative path the graph is limited to. */
+  private file: string | undefined;
+  /** Resolves once the webview has said 'ready': messages posted before then are lost. */
+  private markReady!: () => void;
+  private readonly whenReady = new Promise<void>((r) => (this.markReady = r));
   private searchIndex: Promise<SearchEntry[]> | undefined;
   /** `file:` pattern → matching commits; dropped with the search index. */
   private fileMatches = new Map<string, Promise<Set<string>>>();
@@ -95,6 +116,9 @@ export class GraphController {
   private repoDisposables: vscode.Disposable[] = [];
   private reloadTimer: NodeJS.Timeout | undefined;
   private wipTimer: NodeJS.Timeout | undefined;
+  /** Merge/rebase/etc. in progress, as of the last check. */
+  private _operation: Operation | null = null;
+  private opTimer: NodeJS.Timeout | undefined;
 
   constructor(
     readonly host: GraphHost,
@@ -137,6 +161,7 @@ export class GraphController {
     this.repoDisposables.forEach((d) => d.dispose());
     this.repoDisposables = [];
     this.lastQuery = '';
+    this.file = undefined;
     this.host.setTitle(path.basename(repo));
     this.post({ type: 'repoChanged' });
     void this.watch();
@@ -197,6 +222,11 @@ export class GraphController {
     // Dropping an older stash only rewrites the stash reflog, not refs/stash.
     w(dirs.commonDir, 'logs/refs/stash', reload);
     w(dirs.gitDir, 'index', wip);
+    // Branch switches in other worktrees move their label icons.
+    w(dirs.commonDir, 'worktrees/*/HEAD', reload);
+    // Operation banner: rebase steps, bisect, and conflicts being resolved (index writes).
+    w(dirs.gitDir, '{rebase-merge,rebase-apply,rebase-merge/**,rebase-apply/**,BISECT_LOG}', reload);
+    w(dirs.gitDir, 'index', () => this.refreshOperation());
     const inRepo = (uri: vscode.Uri) => uri.scheme === 'file' && uri.fsPath.startsWith(repo + path.sep);
     bag.push(
       vscode.workspace.onDidSaveTextDocument((d) => inRepo(d.uri) && wip()),
@@ -204,6 +234,21 @@ export class GraphController {
       vscode.workspace.onDidDeleteFiles((e) => e.files.some(inRepo) && wip()),
       vscode.workspace.onDidRenameFiles((e) => e.files.some((f) => inRepo(f.newUri)) && wip()),
       vscode.window.onDidChangeWindowState((s) => s.focused && wip()),
+    );
+  }
+
+  /** Re-reads the operation in progress; posts it only when it changed. */
+  refreshOperation(): void {
+    clearTimeout(this.opTimer);
+    this.opTimer = setTimeout(
+      () =>
+        this.enqueue(async () => {
+          const op = await getOperation(this.repo).catch(() => null);
+          if (JSON.stringify(op) === JSON.stringify(this._operation)) return;
+          this._operation = op;
+          this.post({ type: 'operation', operation: op });
+        }),
+      300,
     );
   }
 
@@ -216,7 +261,10 @@ export class GraphController {
   private onMessage(msg: InMessage): void {
     switch (msg.type) {
       case 'ready':
+        // Restored from webview state; a history opened before the webview was ready wins.
+        if (msg.history && !this.file) this.file = msg.history;
         void this.enqueue(() => this.reload(false));
+        this.markReady();
         break;
       case 'refresh':
         void this.enqueue(() => this.withBusy('Refreshing', () => this.reload(true)));
@@ -268,8 +316,34 @@ export class GraphController {
         void vscode.env.clipboard.writeText(msg.text);
         void vscode.window.setStatusBarMessage(`$(check) Copied ${msg.label}`, 2000);
         break;
+      case 'dropRef':
+        void vscode.commands.executeCommand('commitGraph.dropRef', {
+          refName: msg.refName,
+          refKind: msg.refKind,
+          onto: msg.onto,
+          sha: msg.sha,
+        });
+        break;
+      case 'operation':
+        void vscode.commands.executeCommand(`commitGraph.operation${msg.action}`);
+        break;
       case 'pickRef':
         void this.pickRef().catch((e) => vscode.window.showErrorMessage(errorText(e)));
+        break;
+      case 'undo':
+        void vscode.commands.executeCommand('commitGraph.undo');
+        break;
+      case 'setHistory':
+        this.showFileHistory(msg.file ?? undefined);
+        break;
+      case 'stage':
+      case 'unstage':
+      case 'discard':
+      case 'commit':
+        void this.commitPanel(msg);
+        break;
+      case 'openStatusDiff':
+        void this.openStatusDiff(msg.file, msg.staged);
         break;
     }
   }
@@ -290,7 +364,12 @@ export class GraphController {
     // Sync markers are a nicety: never let them break loading the graph.
     this._sync = await getSync(this.repo).catch(() => null);
     this.stashes = await getStashes(this.repo).catch(() => []);
-    this.commits = await getLog(this.repo, this.scope, 0, count);
+    const worktrees = (await getWorktrees(this.repo).catch(() => [])).map((w) => ({
+      ...w,
+      current: samePath(w.path, this.repo),
+    }));
+    this._operation = await getOperation(this.repo).catch(() => null);
+    this.commits = await getLog(this.repo, this.scope, 0, count, this.file);
     this.done = this.commits.length < count;
     this.layout = new GraphLayout();
     const rows = this.toRows(this.commits, true);
@@ -303,13 +382,16 @@ export class GraphController {
       head: this.head,
       scope: this.scope,
       sync: this._sync,
+      worktrees,
+      history: this.file ?? null,
+      operation: this._operation,
     });
     if (this.lastQuery) await this.runSearch(this.lastQuery);
   }
 
   private async loadMore(): Promise<Row[]> {
     if (this.done) return [];
-    const page = await getLog(this.repo, this.scope, this.commits.length, PAGE);
+    const page = await getLog(this.repo, this.scope, this.commits.length, PAGE, this.file);
     this.commits.push(...page);
     this.done = page.length < PAGE;
     const rows = this.toRows(page, false);
@@ -326,8 +408,9 @@ export class GraphController {
 
   /** Lays out a batch of commits; the first batch gets the uncommitted row on top. */
   private toRows(commits: Commit[], first: boolean): Row[] {
-    const batch: (Commit & { wip?: boolean; stash?: string })[] = insertStashes(commits, this.stashes);
-    if (first && this.wipCount && this.head) batch.unshift(this.wipCommit());
+    // File history: no uncommitted row or stashes; their base often isn't shown.
+    const batch: (Commit & { wip?: boolean; stash?: string })[] = insertStashes(commits, this.file ? [] : this.stashes);
+    if (first && this.wipCount && this.head && !this.file) batch.unshift(this.wipCommit());
     const graph = this.layout.add(batch.map((c) => (c.stash ? { ...c, side: true } : c)));
     return batch.map((c, i) => ({ ...c, graph: graph[i] }));
   }
@@ -389,7 +472,14 @@ export class GraphController {
     try {
       const details =
         hash === WIP
-          ? { hash: WIP, wip: true, parents: this.head ? [this.head] : [], files: await getWorkingChanges(this.repo) }
+          ? {
+              hash: WIP,
+              wip: true,
+              parents: this.head ? [this.head] : [],
+              files: await getWorkingChanges(this.repo),
+              status: await getStatus(this.repo),
+              lastMessage: await lastMessage(this.repo),
+            }
           : this.stashes.some((s) => s.hash === hash)
             ? await getStashDetails(this.repo, hash)
             : await getDetails(this.repo, hash);
@@ -428,6 +518,83 @@ export class GraphController {
     });
     const title = hash === WIP ? 'Uncommitted Changes' : `Changes in ${hash.slice(0, 7)}`;
     await vscode.commands.executeCommand('vscode.changes', title, resources);
+  }
+
+  // ---- commit panel (uncommitted row) -----------------------------------------
+
+  private async commitPanel(msg: Extract<InMessage, { type: 'stage' | 'unstage' | 'discard' | 'commit' }>): Promise<void> {
+    const paths = (fs: FileChange[]) => fs.flatMap((f) => (f.oldPath ? [f.oldPath, f.path] : [f.path]));
+    try {
+      if (msg.type === 'stage') await stage(this.repo, paths(msg.files));
+      else if (msg.type === 'unstage') await unstage(this.repo, paths(msg.files));
+      else if (msg.type === 'discard') {
+        if (!(await this.confirmDiscard(msg.files))) return;
+        await discard(this.repo, msg.files);
+      } else if (msg.type === 'commit') {
+        const all = !msg.amend && !(await getStatus(this.repo)).staged.length;
+        if (all && !(await this.confirmCommitAll())) return;
+        await this.withBusy('Committing', () => commit(this.repo, msg.message, { amend: msg.amend, all }));
+        this.post({ type: 'committed' });
+      }
+    } catch (e) {
+      void vscode.window.showErrorMessage(errorText(e));
+    }
+    // Refresh now rather than waiting for the index watcher's debounce.
+    void this.enqueue(() => this.updateWip());
+  }
+
+  private async confirmDiscard(files: FileChange[]): Promise<boolean> {
+    const untracked = files.filter((f) => f.untracked).length;
+    const name = files.length === 1 ? path.posix.basename(files[0].path) : `${files.length} files`;
+    const [text, button] =
+      untracked === files.length
+        ? [`Delete ${files.length === 1 ? 'untracked file ' : 'untracked '}${name}?`, 'Delete']
+        : [`Discard changes in ${name}?`, 'Discard Changes'];
+    const pick = await vscode.window.showWarningMessage(
+      text,
+      { modal: true, detail: untracked ? 'Untracked files are deleted. This cannot be undone.' : 'This cannot be undone.' },
+      button,
+    );
+    return pick === button;
+  }
+
+  /** No staged changes: offer `commit -a`, like VS Code's smart commit. "Always" is remembered. */
+  private async confirmCommitAll(): Promise<boolean> {
+    const key = 'commitGraph.smartCommit';
+    if (this.context.globalState.get<boolean>(key)) return true;
+    const pick = await vscode.window.showWarningMessage(
+      'There are no staged changes. Stage all tracked changes and commit them?',
+      { modal: true, detail: 'Untracked files are left out.' },
+      'Yes',
+      'Always',
+    );
+    if (pick === 'Always') await this.context.globalState.update(key, true);
+    return pick === 'Yes' || pick === 'Always';
+  }
+
+  /** Staged: HEAD ↔ index. Unstaged: index ↔ working tree. Conflicts open the file itself. */
+  private async openStatusDiff(f: FileChange, staged: boolean): Promise<void> {
+    const file = vscode.Uri.file(path.join(this.repo, f.path));
+    if (f.status === 'U') {
+      await vscode.window.showTextDocument(file, { preview: true });
+      return;
+    }
+    const empty = (p: string) => revisionUri(this.repo, p, '');
+    const name = path.posix.basename(f.path);
+    let left: vscode.Uri;
+    let right: vscode.Uri;
+    let title: string;
+    if (staged) {
+      const leftPath = f.oldPath ?? f.path;
+      left = f.status === 'A' || !this.head ? empty(leftPath) : revisionUri(this.repo, leftPath, this.head);
+      right = f.status === 'D' ? empty(f.path) : indexUri(this.repo, f.path);
+      title = `${name} (HEAD ↔ Index)`;
+    } else {
+      left = f.untracked ? empty(f.path) : indexUri(this.repo, f.path);
+      right = f.status === 'D' ? empty(f.path) : file;
+      title = f.untracked ? `${name} (Untracked)` : `${name} (Index ↔ Working Tree)`;
+    }
+    await vscode.commands.executeCommand('vscode.diff', left, right, title, { preview: true });
   }
 
   // ---- compare two commits -------------------------------------------------
@@ -471,7 +638,7 @@ export class GraphController {
       this.post({ type: 'search', query, hashes: [] });
       return;
     }
-    this.searchIndex ??= getSearchIndex(this.repo, this.scope);
+    this.searchIndex ??= getSearchIndex(this.repo, this.scope, this.file);
     try {
       const q = parseQuery(query);
       const files = q.files.length ? await this.matchFiles(q.files) : undefined;
@@ -496,6 +663,29 @@ export class GraphController {
     );
     const [first, ...rest] = sets;
     return new Set([...first].filter((h) => rest.every((s) => s.has(h))));
+  }
+
+  // ---- file & line history ------------------------------------------------
+
+  /** Limits the graph to commits touching `file` (repo-relative); undefined for the full graph. */
+  showFileHistory(file: string | undefined): void {
+    if (file === this.file) return;
+    this.file = file;
+    void this.enqueue(() => this.withBusy('Loading', () => this.reload(false)));
+  }
+
+  /** Dims all but `hashes` (newest first) under a chip and selects the newest; after any pending load. */
+  showLineMarks(label: string, hashes: string[]): void {
+    void this.whenReady.then(() => this.enqueue(async () => this.post({ type: 'lineMarks', label, hashes })));
+  }
+
+  /** Selects a commit, loading history until it's there; after any pending load. */
+  revealCommit(hash: string): void {
+    void this.whenReady.then(() => this.enqueue(async () => this.post({ type: 'jumpTo', hash })));
+  }
+
+  get historyFile(): string | undefined {
+    return this.file;
   }
 
   // ---- html ----------------------------------------------------------------
@@ -536,11 +726,14 @@ export class GraphController {
     <div class="sync" id="sync"></div>
     <span class="spacer"></span>
     <button class="focus-chip" id="focus-chip" hidden title="Clear highlight (Esc)"></button>
+    <button class="focus-chip" id="lines-chip" hidden title="Clear line history (Esc)"></button>
+    <button class="focus-chip" id="history-chip" hidden title="Back to the full graph (Esc)"></button>
     <span class="status" id="status"></span>
     <button class="icon" id="go-head" title="Go to HEAD" aria-label="Go to HEAD"><i class="codicon codicon-target"></i></button>
     <button class="icon" id="fetch" title="Fetch all remotes" aria-label="Fetch"><i class="codicon codicon-cloud-download"></i></button>
     <button class="icon" id="refresh" title="Refresh" aria-label="Refresh"><i class="codicon codicon-refresh"></i></button>
   </header>
+  <div class="op-banner" id="op-banner" hidden role="status"></div>
   <main class="main">
     <section class="list" id="list">
       <div class="row header">
@@ -569,6 +762,7 @@ export class GraphController {
     if (GraphController.active === this) GraphController.active = [...GraphController.all].at(-1);
     clearTimeout(this.reloadTimer);
     clearTimeout(this.wipTimer);
+    clearTimeout(this.opTimer);
     this.repoDisposables.forEach((d) => d.dispose());
     this.disposables.forEach((d) => d.dispose());
   }

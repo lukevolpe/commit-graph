@@ -1,4 +1,8 @@
 import { execFile } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import { join as joinPath } from 'node:path';
+import { rm } from 'node:fs/promises';
+import { resolve, sep } from 'node:path';
 import { ParsedQuery, filePathspecs, isEmptyQuery, parseQuery } from './search';
 
 export type RefKind = 'head' | 'branch' | 'remote' | 'tag';
@@ -105,11 +109,46 @@ async function revArgs(cwd: string, scope: Scope): Promise<string[] | null> {
   return scope === 'all' ? ['--branches', '--remotes', '--tags'] : null;
 }
 
-export async function getLog(cwd: string, scope: Scope, skip: number, limit: number): Promise<Commit[]> {
+/** `file`: repo-relative path; only commits touching it (see fileHistoryArgs). */
+export async function getLog(cwd: string, scope: Scope, skip: number, limit: number, file?: string): Promise<Commit[]> {
   const revs = await revArgs(cwd, scope);
   if (!revs) return [];
   const args = ['log', '--topo-order', '--decorate=full', `--format=${LOG_FORMAT}`, `--skip=${skip}`, `-n${limit}`];
+  if (file) return parseLog(await git(cwd, [...args, ...fileHistoryArgs(), ...revs, '--', `:(literal)${file}`]));
   return parseLog(await git(cwd, [...args, ...revs, '--']));
+}
+
+/**
+ * Path-limited walk that still draws as a graph: --parents makes %P the rewritten
+ * parents (nearest shown ancestors), --full-history keeps side branches that touched
+ * the file, --simplify-merges drops merges that add nothing. Not --follow (it can't
+ * rewrite parents or walk several refs), so history stops at a rename.
+ */
+function fileHistoryArgs(): string[] {
+  return ['--full-history', '--simplify-merges', '--parents'];
+}
+
+// ---- line history & blame ------------------------------------------------------
+
+/** Commits that changed lines `start`–`end` (1-based) of `file`, newest first. From HEAD. */
+export async function getLineHistory(cwd: string, file: string, start: number, end: number): Promise<string[]> {
+  const out = await git(cwd, ['log', '-s', '--format=%H', `-L${start},${end}:${file}`, 'HEAD']);
+  return out.split('\n').filter((l) => /^[0-9a-f]{40}$/.test(l));
+}
+
+/** Commit that last changed line `line` (1-based) of `file`; null when uncommitted or untracked. */
+export async function getBlameCommit(cwd: string, file: string, line: number): Promise<string | null> {
+  try {
+    return parseBlameCommit(await git(cwd, ['blame', '--porcelain', `-L${line},${line}`, '--', file]));
+  } catch {
+    return null;
+  }
+}
+
+/** First commit hash in `git blame --porcelain` output; null for the all-zero "not committed yet". */
+export function parseBlameCommit(out: string): string | null {
+  const h = out.match(/^([0-9a-f]{40}) /)?.[1];
+  return h && !/^0+$/.test(h) ? h : null;
 }
 
 export function parseLog(out: string): Commit[] {
@@ -336,11 +375,12 @@ export interface SearchEntry {
 }
 
 /** Everything search needs, in graph order. Built once per refresh. */
-export async function getSearchIndex(cwd: string, scope: Scope): Promise<SearchEntry[]> {
+export async function getSearchIndex(cwd: string, scope: Scope, file?: string): Promise<SearchEntry[]> {
   const revs = await revArgs(cwd, scope);
   if (!revs) return [];
   const fmt = ['%H', '%P', '%at', '%an', '%ae', '%B'].join('%x1f') + '%x1e';
-  const out = await git(cwd, ['log', '--topo-order', `--format=${fmt}`, ...revs, '--']);
+  const limit = file ? [...fileHistoryArgs(), ...revs, '--', `:(literal)${file}`] : [...revs, '--'];
+  const out = await git(cwd, ['log', '--topo-order', `--format=${fmt}`, ...limit]);
   return out
     .split(RECORD)
     .map((r) => r.replace(/^\n/, ''))
@@ -498,4 +538,229 @@ export async function getStashDetails(cwd: string, hash: string): Promise<Commit
     ? (await getChanges(cwd, EMPTY_TREE, untrackedCommit)).map((f) => ({ ...f, untracked: true }))
     : [];
   return { ...d, parents: d.parents.slice(0, 1), files: [...d.files, ...untracked] };
+}
+
+export interface StashPushOptions {
+  message?: string;
+  /** Also stash untracked files (`-u`). */
+  untracked?: boolean;
+  /** Only what's staged (`--staged`, git 2.35+). */
+  staged?: boolean;
+}
+
+/** Arguments for `git stash push` with the given options. */
+export function stashPushArgs({ message, untracked, staged }: StashPushOptions): string[] {
+  const args = ['stash', 'push'];
+  if (untracked) args.push('--include-untracked');
+  if (staged) args.push('--staged');
+  if (message?.trim()) args.push('-m', message.trim());
+  return args;
+}
+
+/** True if `git version` output is at least major.minor. */
+export function gitAtLeast(versionOut: string, major: number, minor: number): boolean {
+  const m = /(\d+)\.(\d+)/.exec(versionOut);
+  if (!m) return false;
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  return a > major || (a === major && b >= minor);
+}
+
+// ---- operation in progress (merge, rebase, cherry-pick, revert, bisect) ----------
+
+export type OperationKind = 'merge' | 'rebase' | 'cherry-pick' | 'revert' | 'bisect';
+
+export interface Operation {
+  kind: OperationKind;
+  /** Branch being merged into / rebased / bisected; null when detached. */
+  head: string | null;
+  /** What comes in: merged branch, rebase onto, short SHA being picked or reverted. */
+  incoming?: string | null;
+  /** Subject of the commit being cherry-picked or reverted. */
+  subject?: string;
+  /** Rebase progress: current step and total. */
+  step?: number;
+  total?: number;
+  /** Files with unresolved conflicts, repo-relative. */
+  conflicts: string[];
+}
+
+/** The merge, rebase, cherry-pick, revert or bisect in progress, or null. Read from the git dir. */
+export async function getOperation(cwd: string): Promise<Operation | null> {
+  const { gitDir } = await gitDirs(cwd);
+  const read = (f: string) => readFile(joinPath(gitDir, f), 'utf8').then((s) => s.trim(), () => null);
+  const num = (s: string | null) => (s && /^\d+$/.test(s) ? Number(s) : undefined);
+  const branchName = (ref: string | null) => (ref && ref.startsWith('refs/heads/') ? ref.slice(11) : null);
+  const current = async () => {
+    try {
+      return (await git(cwd, ['symbolic-ref', '--short', '-q', 'HEAD'])).trim() || null;
+    } catch {
+      return null;
+    }
+  };
+  const conflicts = async () =>
+    (await git(cwd, ['diff', '--name-only', '-z', '--diff-filter=U'])).split('\0').filter(Boolean);
+  const commit = async (sha: string) => ({
+    incoming: sha.slice(0, 7),
+    subject: (await git(cwd, ['log', '-1', '--format=%s', sha, '--']).catch(() => '')).trim(),
+  });
+
+  for (const d of ['rebase-merge', 'rebase-apply']) {
+    const headName = await read(`${d}/head-name`);
+    if (headName === null) continue;
+    if ((await read(`${d}/applying`)) !== null) break; // `git am`, not a rebase
+    const merge = d === 'rebase-merge';
+    const onto = await read(`${d}/onto`);
+    return {
+      kind: 'rebase',
+      head: branchName(headName),
+      incoming: onto ? await refNameFor(cwd, onto) : null,
+      step: num(await read(merge ? `${d}/msgnum` : `${d}/next`)),
+      total: num(await read(merge ? `${d}/end` : `${d}/last`)),
+      conflicts: await conflicts(),
+    };
+  }
+  const mergeHead = await read('MERGE_HEAD');
+  if (mergeHead) {
+    const msg = (await read('MERGE_MSG')) ?? '';
+    const m = msg.match(/^Merge (?:remote-tracking )?(?:branch|tag|commit) '([^']+)'/);
+    return {
+      kind: 'merge',
+      head: await current(),
+      incoming: m ? m[1] : mergeHead.split('\n')[0].slice(0, 7),
+      conflicts: await conflicts(),
+    };
+  }
+  for (const [file, kind] of [['CHERRY_PICK_HEAD', 'cherry-pick'], ['REVERT_HEAD', 'revert']] as const) {
+    const sha = await read(file);
+    if (sha) return { kind, head: await current(), ...(await commit(sha)), conflicts: await conflicts() };
+  }
+  if ((await read('BISECT_LOG')) !== null) {
+    const start = await read('BISECT_START');
+    return { kind: 'bisect', head: start && !/^[0-9a-f]{40}$/.test(start) ? start : null, conflicts: [] };
+  }
+  return null;
+}
+
+/** A branch name pointing at `sha` (local first), else its short SHA. */
+async function refNameFor(cwd: string, sha: string): Promise<string> {
+  try {
+    const out = await git(cwd, ['for-each-ref', '--points-at', sha, '--format=%(refname:short)', 'refs/heads', 'refs/remotes']);
+    const name = out.split('\n').find((n) => n && !n.endsWith('/HEAD'));
+    if (name) return name;
+  } catch {
+    // fall through
+  }
+  return sha.slice(0, 7);
+}
+
+/** Runs git with no editor, so `--continue` and merges never wait on one. */
+export function gitNoEditor(cwd: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      'git',
+      ['-c', 'core.editor=true', ...args],
+      {
+        cwd,
+        maxBuffer: 64 * 1024 * 1024,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C', GIT_EDITOR: 'true', GIT_SEQUENCE_EDITOR: 'true' },
+      },
+      (err, stdout, stderr) => {
+        if (err) reject(new Error(stderr.trim() || stdout.trim() || err.message));
+        else resolve(stdout);
+      },
+    );
+  });
+}
+
+// ---- staging & committing (commit panel) -------------------------------------------
+
+/** Working tree state split like the Source Control view. Untracked and conflicted files are unstaged. */
+export interface WorkingStatus {
+  staged: FileChange[];
+  unstaged: FileChange[];
+}
+
+export async function getStatus(cwd: string): Promise<WorkingStatus> {
+  const diff = (...args: string[]) =>
+    git(cwd, ['diff', ...args, '--numstat', '-z', '--no-color', '--no-ext-diff', '--']).catch(() => '');
+  const [out, cached, worktree] = await Promise.all([
+    git(cwd, ['status', '--porcelain=v2', '-z', '--untracked-files=all']),
+    diff('--cached', '-M'),
+    diff(),
+  ]);
+  const s = parseStatus(out);
+  const counts = (fs: FileChange[], nums: ReturnType<typeof parseNumstat>) =>
+    fs.map((f) => (f.untracked ? f : { ...f, ...(nums.get(f.path) ?? {}) }));
+  return { staged: counts(s.staged, parseNumstat(cached)), unstaged: counts(s.unstaged, parseNumstat(worktree)) };
+}
+
+/** Stages paths as they are in the working tree, deletions and untracked files included. */
+export async function stage(cwd: string, paths: string[]): Promise<void> {
+  if (paths.length) await git(cwd, ['add', '-A', '--', ...paths]);
+}
+
+/** Moves staged paths back to unstaged. Pass both sides of a rename. */
+export async function unstage(cwd: string, paths: string[]): Promise<void> {
+  if (!paths.length) return;
+  if (await getHead(cwd)) await git(cwd, ['reset', '-q', '--', ...paths]);
+  else await git(cwd, ['rm', '-q', '-r', '--cached', '--', ...paths]); // nothing to reset to yet
+}
+
+/** Throws away unstaged changes: tracked files go back to their staged (index) state, untracked files are deleted. */
+export async function discard(cwd: string, files: FileChange[]): Promise<void> {
+  const tracked = files.filter((f) => !f.untracked).map((f) => f.path);
+  if (tracked.length) await git(cwd, ['checkout', '-q', '--', ...tracked]);
+  for (const f of files.filter((f) => f.untracked)) {
+    const abs = resolve(cwd, f.path);
+    if (!abs.startsWith(resolve(cwd) + sep)) throw new Error(`Refusing to delete ${f.path}: outside the repository`);
+    await rm(abs, { force: true });
+  }
+}
+
+/** Commits the index; `all` also stages every tracked change first (`commit -a`). */
+export async function commit(cwd: string, message: string, opts: { amend?: boolean; all?: boolean } = {}): Promise<void> {
+  const args = ['commit', '-q', '-m', message];
+  if (opts.all) args.push('-a');
+  if (opts.amend) args.push('--amend');
+  await git(cwd, args);
+}
+
+/** HEAD's full message (for amending), or '' before the first commit. */
+export async function lastMessage(cwd: string): Promise<string> {
+  if (!(await getHead(cwd))) return '';
+  return (await git(cwd, ['log', '-1', '--format=%B', 'HEAD'])).trimEnd();
+}
+
+/** Parses `git status --porcelain=v2 -z`. Line counts are left null (see getStatus). */
+export function parseStatus(out: string): WorkingStatus {
+  const t = out.split('\0');
+  const staged: FileChange[] = [];
+  const unstaged: FileChange[] = [];
+  const file = (status: FileStatus, path: string, oldPath?: string): FileChange => ({
+    status,
+    path,
+    ...(oldPath ? { oldPath } : {}),
+    added: null,
+    deleted: null,
+  });
+  // Fields before the path: ordinary 8, rename/copy 9, unmerged 10.
+  const rest = (line: string, n: number) => line.split(' ').slice(n).join(' ');
+  for (let i = 0; i < t.length; i++) {
+    const line = t[i];
+    if (!line) continue;
+    const kind = line[0];
+    if (kind === '?') {
+      unstaged.push({ ...file('A', line.slice(2)), untracked: true });
+    } else if (kind === 'u') {
+      unstaged.push(file('U', rest(line, 10)));
+    } else if (kind === '1' || kind === '2') {
+      const [x, y] = line.slice(2, 4);
+      const path = rest(line, kind === '1' ? 8 : 9);
+      const oldPath = kind === '2' ? t[++i] : undefined;
+      const side = (c: string) => file(c as FileStatus, path, c === 'R' || c === 'C' ? oldPath : undefined);
+      if (x !== '.') staged.push(side(x));
+      if (y !== '.') unstaged.push(side(y));
+    }
+  }
+  return { staged, unstaged };
 }

@@ -22,6 +22,15 @@ export function revisionUri(repo: string, relPath: string, ref: string): vscode.
   });
 }
 
+/**
+ * The file as staged in the index (`git show :0:<path>`). Stamped per call: the index
+ * changes under the same path, and VS Code caches provider documents by URI.
+ */
+export function indexUri(repo: string, relPath: string): vscode.Uri {
+  const q: Query & { t: number } = { repo, ref: ':0', path: relPath, t: Date.now() };
+  return vscode.Uri.from({ scheme: SCHEME, path: path.posix.join('/', 'index', relPath), query: JSON.stringify(q) });
+}
+
 export class RevisionContentProvider implements vscode.TextDocumentContentProvider {
   async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
     const q = JSON.parse(uri.query) as Query;

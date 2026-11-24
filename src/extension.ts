@@ -5,6 +5,8 @@ import { GraphViewProvider, VIEW_ID, openInEditor } from './hosts';
 import { RevisionContentProvider, SCHEME } from './content';
 import { registerActions } from './actions';
 import { pickRepo } from './repos';
+import { registerHistory } from './history';
+import { registerRebaseEditor } from './rebaseEditor';
 
 export function activate(context: vscode.ExtensionContext): void {
   const view = new GraphViewProvider(context);
@@ -40,6 +42,19 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   registerActions(context);
+  registerHistory(context, async (repo) => {
+    const existing = GraphController.active?.repo === repo ? GraphController.active : GraphController.forRepo(repo);
+    if (existing) {
+      existing.reveal();
+      return existing;
+    }
+    await vscode.commands.executeCommand(`${VIEW_ID}.focus`);
+    // The view resolves asynchronously the first time it's shown.
+    for (let i = 0; i < 50 && !view.controller; i++) await new Promise((r) => setTimeout(r, 100));
+    view.controller?.setRepo(repo);
+    return view.controller;
+  });
+  registerRebaseEditor(context);
 }
 
 export function deactivate(): void {}

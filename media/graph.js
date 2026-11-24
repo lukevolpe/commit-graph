@@ -23,6 +23,9 @@
   const emptyEl = $('empty');
   const syncEl = $('sync');
   const focusChip = $('focus-chip');
+  const historyChip = $('history-chip');
+  const linesChip = $('lines-chip');
+  const opEl = $('op-banner');
 
   const saved = vscode.getState() || {};
   const state = {
@@ -57,7 +60,20 @@
     rowsVersion: 0,
     /** Compare mode: { base, other, from, to, files, error }; active only while base is selected. */
     cmp: null,
+    menuRow: null,
+    /** Working trees of the repo (see Worktree in worktrees.ts), `current` marks this one. */
+    worktrees: [],
+    /** File history mode: repo-relative path the host limits the graph to, or null. */
+    history: saved.history || null,
+    /** Line history: { label, hashes } dimming the rest like search, or null. */
+    lines: saved.lines || null,
+    /** Merge/rebase/cherry-pick/revert/bisect in progress (see Operation in git.ts), or null. */
+    operation: null,
   };
+  if (state.lines) {
+    state.matches = state.lines.hashes;
+    state.matchSet = new Set(state.lines.hashes);
+  }
   const layout = JSON.parse(document.body.dataset.layout || '{}');
   setDetailsWidth(layout.width || saved.detailsWidth || 380);
   setDetailsHeight(layout.height || saved.detailsHeight || 0);
@@ -113,17 +129,28 @@
         }
         break;
       case 'compareWith':
+        state.menuRow = null;
         startCompare(m.sha);
+        break;
+      case 'lineMarks':
+        setLines({ label: m.label, hashes: m.hashes });
+        if (m.hashes.length) reveal(m.hashes[0]);
+        scroller.focus();
         break;
       case 'highlight':
         setPin(m.ref ? { ref: m.ref } : m.sha ? { sha: m.sha } : null);
         break;
       case 'repoChanged':
         state.pin = null;
+        state.history = null;
+        state.lines = null;
+        updateHistoryChips();
         state.sync = null;
         state.outSet = new Set();
         state.inSet = new Set();
         renderSync();
+        state.operation = null;
+        renderOperation();
         updateFocusChip();
         state.rows = [];
         state.index = new Map();
@@ -152,9 +179,16 @@
         searchInput.focus();
         searchInput.select();
         break;
+      case 'committed':
+        clearDraft();
+        break;
       case 'busy':
         state.busy += m.busy ? 1 : -1;
         progress.classList.toggle('active', state.busy > 0);
+        break;
+      case 'operation':
+        state.operation = m.operation;
+        renderOperation();
         break;
       case 'error':
         state.loading = false;
@@ -173,7 +207,10 @@
       state.sync = m.sync;
       state.outSet = new Set(m.sync ? m.sync.outgoing : []);
       state.inSet = new Set(m.sync ? m.sync.incoming : []);
+      state.worktrees = m.worktrees || [];
       updateScopeButtons();
+      state.history = m.history || null;
+      updateHistoryChips();
       if (!m.keep) scroller.scrollTop = 0;
       else scroller.scrollTop = top;
     } else {
@@ -187,7 +224,7 @@
 
     const commits = state.rows.filter((r) => !r.wip && !r.stash).length;
     status.textContent = `${commits.toLocaleString()}${state.done ? '' : '+'} commits`;
-    if (!state.rows.length) showEmpty('No commits yet.');
+    if (!state.rows.length) showEmpty(state.history ? `No commits touch ${state.history}.` : 'No commits yet.');
     else emptyEl.hidden = true;
 
     if (m.mode === 'reset') {
@@ -197,6 +234,8 @@
       // A pinned branch that no longer exists (deleted, or hidden by scope) drops its highlight.
       if (state.pin && !focusInfo()) setPin(null);
       renderSync();
+      state.operation = m.operation || null;
+      renderOperation();
     }
     updateFocusChip();
     render();
@@ -277,7 +316,7 @@
     const dim = state.matches.length > 0 && !state.matchSet.has(r.hash);
     const off = !!f && !f.marks.get(i)?.node;
     const cmpRow = compareActive() && r.hash === state.cmp.other;
-    const cls = ['row', sel && 'selected', cmpRow && 'compare', dim && 'dim', off && 'off', r.hash === state.head && 'head', r.wip && 'wip-row', r.stash && 'stash-row']
+    const cls = ['row', sel && 'selected', cmpRow && 'compare', dim && 'dim', off && 'off', r.hash === state.menuRow && 'menu-row', r.hash === state.head && 'head', r.wip && 'wip-row', r.stash && 'stash-row']
       .filter(Boolean)
       .join(' ');
     const pinned = focusInfo();
@@ -298,7 +337,7 @@
       : `<div class="col-author" title="${esc(r.author)} &lt;${esc(r.email)}&gt;">${avatar(r.author, r.email)}<span>${esc(r.author)}</span></div>`;
     return `<div class="${cls}" data-i="${i}" role="option" aria-selected="${sel}" data-vscode-context='${attr(JSON.stringify(ctx))}'>
 <div class="col-graph">${graphSvg(r, i, f)}</div>
-<div class="col-msg">${r.stash ? stashBadge(r.stash) : badges(r.refs, color)}<span class="subject">${highlight(r.subject)}</span></div>
+<div class="col-msg">${r.stash ? stashBadge(r.stash) : badges(r.refs, color)}${r.stash || r.wip ? '' : worktreeBadges(r.hash)}<span class="subject">${highlight(r.subject)}</span></div>
 ${author}
 <div class="col-date" title="${r.wip ? '' : fullDate(r.date)}">${r.wip ? '' : relDate(r.date)}</div>
 <div class="col-sha">${r.wip ? '<i class="codicon codicon-edit"></i>' : r.stash ? r.hash.slice(0, 7) : syncMark(r.hash) + r.hash.slice(0, 7)}</div>
@@ -351,6 +390,12 @@ ${author}
     };
     let tip = [r.name, ...(r.remotes || [])].join(', ') + (r.current ? ' (checked out)' : '');
     let sync = r.remotes ? '<i class="codicon codicon-cloud sync"></i>' : '';
+    const wt = r.kind === 'branch' ? otherWorktree(r.name) : null;
+    if (wt) {
+      ctx.worktreePath = wt.path;
+      tip += `\nChecked out in ${wt.path}`;
+      sync = `<i class="codicon codicon-worktree wt" title="${esc(`Checked out in ${wt.path}`)}"></i>` + sync;
+    }
     const t = r.kind === 'branch' && state.sync ? state.sync.tracking[r.name] : null;
     if (t && t.gone) {
       sync = '<i class="codicon codicon-warning gone"></i>';
@@ -360,6 +405,25 @@ ${author}
       tip += `\n${aheadBehind(t)} ${t.upstream}`;
     }
     return `<span class="ref ${r.kind}${r.current ? ' current' : ''} c${color}" title="${esc(tip)}" data-vscode-context='${attr(JSON.stringify(ctx))}'><i class="codicon codicon-${icon}"></i><span>${esc(r.name)}</span>${sync}</span>`;
+  }
+
+  /** Another worktree that has local branch `name` checked out, or null. */
+  function otherWorktree(name) {
+    return state.worktrees.find((w) => !w.current && w.branch === name) || null;
+  }
+
+  /** Muted label on the commit a detached worktree (not this one) sits on. */
+  function worktreeBadges(hash) {
+    const here = state.worktrees.filter((w) => !w.current && w.detached && w.head === hash);
+    if (!here.length) return '';
+    const html = here
+      .map((w) => {
+        const name = w.path.split(/[\\/]/).filter(Boolean).pop() || w.path;
+        const ctx = { webviewSection: 'worktree', sha: hash, worktreePath: w.path, preventDefaultContextMenuItems: true };
+        return `<span class="stash-ref wt-ref" title="${esc(`Worktree at ${w.path} (detached)`)}" data-vscode-context='${attr(JSON.stringify(ctx))}'><i class="codicon codicon-worktree"></i><span>${esc(name)}</span></span>`;
+      })
+      .join('');
+    return `<span class="refs">${html}</span>`;
   }
 
   /** Muted `stash@{n}` label. Not a ref: no ref menu, no lane hover. */
@@ -427,6 +491,58 @@ ${author}
   syncEl.addEventListener('click', (e) => {
     const b = /** @type {HTMLElement} */ (e.target).closest('[data-act]');
     if (b) post(b.dataset.act);
+  });
+
+  // ---- operation in progress banner ------------------------------------------------
+
+  const OP_ICON = { merge: 'git-merge', rebase: 'git-compare', 'cherry-pick': 'git-commit', revert: 'discard', bisect: 'search' };
+  const MAX_OP_FILES = 12;
+
+  function renderOperation() {
+    const op = state.operation;
+    opEl.hidden = !op;
+    if (!op) {
+      opEl.innerHTML = '';
+      return;
+    }
+    const b = (s) => `<b>${esc(s || 'HEAD')}</b>`;
+    const commit = () => `${b(op.incoming)}${op.subject ? ` <span class="op-subject">${esc(op.subject)}</span>` : ''}`;
+    let text = {
+      merge: () => `Merging ${b(op.incoming)} into ${b(op.head)}`,
+      rebase: () => `Rebasing ${b(op.head)} onto ${b(op.incoming)}${op.step && op.total ? ` · step ${op.step} of ${op.total}` : ''}`,
+      'cherry-pick': () => `Cherry-picking ${commit()}`,
+      revert: () => `Reverting ${commit()}`,
+      bisect: () => `Bisecting${op.head ? ` from ${b(op.head)}` : ''} · mark the checked-out commit`,
+    }[op.kind]();
+    const n = op.conflicts.length;
+    if (n) text += ` · <span class="op-conflicts">${n} ${n === 1 ? 'conflict' : 'conflicts'}</span>`;
+    else if (op.kind !== 'bisect') text += ' · ready to continue';
+    const btn = (act, label, tip, cls = '') =>
+      `<button class="op-btn${cls}" data-op="${act}" title="${esc(tip)}">${label}</button>`;
+    const btns =
+      op.kind === 'bisect'
+        ? btn('BisectGood', 'Good', 'The checked-out commit is good') +
+          btn('BisectBad', 'Bad', 'The checked-out commit is bad') +
+          btn('Abort', 'End', 'End the bisect and go back')
+        : btn('Continue', 'Continue', n ? 'Resolve and stage the conflicts first' : `git ${op.kind} --continue`, n ? '' : ' primary') +
+          (op.kind === 'merge' ? '' : btn('Skip', 'Skip', `Skip this commit (git ${op.kind} --skip)`)) +
+          btn('Abort', 'Abort', `git ${op.kind} --abort`);
+    const files = op.conflicts
+      .slice(0, MAX_OP_FILES)
+      .map((f) => `<button class="op-file" data-path="${esc(f)}" title="Open ${esc(f)}"><i class="codicon codicon-warning"></i>${esc(f)}</button>`)
+      .join('');
+    const more = n > MAX_OP_FILES ? `<span class="muted">+${n - MAX_OP_FILES} more</span>` : '';
+    opEl.innerHTML =
+      `<i class="codicon codicon-${OP_ICON[op.kind]} op-icon"></i><span class="op-text">${text}</span><span class="spacer"></span>${btns}` +
+      (n ? `<div class="op-files">${files}${more}</div>` : '');
+  }
+
+  opEl.addEventListener('click', (e) => {
+    const t = /** @type {HTMLElement} */ (e.target);
+    const b = t.closest('[data-op]');
+    if (b) return post('operation', { action: /** @type {HTMLElement} */ (b).dataset.op });
+    const f = t.closest('[data-path]');
+    if (f) post('openFile', { path: /** @type {HTMLElement} */ (f).dataset.path });
   });
 
   // ---- lane highlight ------------------------------------------------------------
@@ -524,6 +640,49 @@ ${author}
 
   focusChip.addEventListener('click', () => setPin(null));
 
+  // ---- file & line history ----------------------------------------------------
+
+  /** null: back to the full graph. The host reloads rows and echoes the path back. */
+  function setHistory(file) {
+    state.history = file;
+    persist();
+    updateHistoryChips();
+    post('setHistory', { file });
+  }
+
+  function setLines(lines) {
+    state.lines = lines;
+    state.query = '';
+    searchInput.value = '';
+    state.matches = lines ? lines.hashes : [];
+    state.matchSet = new Set(state.matches);
+    state.terms = [];
+    state.matchPos = -1;
+    updateSearchCount();
+    persist();
+    updateHistoryChips();
+    render();
+  }
+
+  function updateHistoryChips() {
+    const h = state.history;
+    historyChip.hidden = !h;
+    if (h) {
+      historyChip.title = `History of ${h}: back to the full graph (Esc)`;
+      historyChip.innerHTML = `<i class="codicon codicon-history"></i><span>History: ${esc(h)}</span><i class="codicon codicon-close"></i>`;
+    }
+    const l = state.lines;
+    linesChip.hidden = !l;
+    if (l) {
+      const n = `${l.hashes.length} ${l.hashes.length === 1 ? 'commit' : 'commits'}`;
+      linesChip.title = `${n} changed ${l.label}: clear (Esc)`;
+      linesChip.innerHTML = `<i class="codicon codicon-selection"></i><span>${esc(l.label)} · ${l.hashes.length}</span><i class="codicon codicon-close"></i>`;
+    }
+  }
+
+  historyChip.addEventListener('click', () => setHistory(null));
+  linesChip.addEventListener('click', () => setLines(null));
+
   // Preview: hovering a branch or tag label lights its line. Tracked with mousemove
   // because re-rendering swaps the elements under the pointer.
   let hoverTimer = 0;
@@ -577,6 +736,7 @@ ${author}
       return;
     }
     const row = state.rows[state.index.get(d.hash)];
+    if (d.wip && d.status) return renderCommitPanel(d);
     if (d.wip) {
       detailsEl.innerHTML = `${closeBtn()}
 <div class="d-head">
@@ -642,7 +802,8 @@ ${filesHtml(d)}`;
             : `<span class="add">+${f.added}</span><span class="del">−${f.deleted}</span>`;
         const renamed = f.oldPath ? ` title="Renamed from ${esc(f.oldPath)}"` : '';
         const canOpen = f.status !== 'D';
-        return `<li>
+        const inHistory = state.history && (f.path === state.history || f.path.startsWith(state.history + '/'));
+        return `<li${inHistory ? ' class="history-file"' : ''}>
   <button class="file" data-file="${i}"${renamed}>
     <span class="st st-${f.status}" title="${statusName(f.status)}">${f.status}</span>
     <span class="fname">${esc(name)}</span>
@@ -767,10 +928,7 @@ ${filesHtml(d)}`;
       const row = /** @type {HTMLElement} */ (e.target).closest('.row');
       const r = row && state.rows[Number(row.dataset.i)];
       if (!r || !state.selected) return;
-      if (e.button === 2) {
-        // Right-click keeps the selection so "Compare with Selected" has something to compare with.
-        if (r.hash !== state.selected) e.stopPropagation();
-      } else if (e.button === 0 && (e.ctrlKey || e.metaKey)) {
+      if (e.button === 0 && (e.ctrlKey || e.metaKey)) {
         e.stopPropagation();
         if (r.hash !== state.selected) startCompare(r.hash);
       } else if (e.button === 0) {
@@ -793,6 +951,231 @@ ${filesHtml(d)}`;
     },
     true,
   );
+
+  // ---- commit panel (uncommitted row) -------------------------------------------
+  // Staged / Unstaged lists with stage, unstage, discard and open actions, plus a commit box.
+  // Status refreshes replace only the lists, so a half-typed message keeps its text and focus.
+
+  const SUMMARY_HINT = 72;
+  state.draft = saved.draft || { summary: '', body: '', amend: false };
+
+  function cpFiles(sec) {
+    const s = state.details && state.details.status;
+    return s ? (sec === 'staged' ? s.staged : s.unstaged) : [];
+  }
+
+  function renderCommitPanel(d) {
+    if (!$('cp-summary')) {
+      detailsEl.innerHTML = `${closeBtn()}
+<div class="d-head">
+  <h2 class="d-subject">Uncommitted changes</h2>
+  <div class="d-meta" id="cp-meta"></div>
+</div>
+<div class="cp">
+  <div id="cp-lists"></div>
+  <div class="cp-box">
+    <div class="cp-summary">
+      <input id="cp-summary" type="text" placeholder="Summary" aria-label="Commit summary">
+      <span class="cp-count" id="cp-count"></span>
+    </div>
+    <textarea id="cp-body" rows="3" placeholder="Description (optional)" aria-label="Commit description"></textarea>
+    <div class="cp-actions">
+      <label class="cp-amend" title="Replace the last commit (prefills its message)"><input type="checkbox" id="cp-amend">Amend</label>
+      <span class="cp-grow"></span>
+      <button class="cp-commit" id="cp-commit" data-cp="commit"></button>
+    </div>
+  </div>
+</div>`;
+      syncDraftInputs();
+    }
+    $('cp-meta').innerHTML = state.head ? `On HEAD <code>${state.head.slice(0, 7)}</code>` : 'No commits yet';
+    const focus = cpFocused();
+    $('cp-lists').innerHTML = cpSection('staged', d.status.staged) + cpSection('unstaged', d.status.unstaged);
+    restoreCpFocus(focus);
+    updateCommitBox();
+  }
+
+  function cpSection(sec, files) {
+    const staged = sec === 'staged';
+    const label = staged ? 'Unstage All' : 'Stage All';
+    const act = files.length
+      ? `<button class="icon" data-cp="${staged ? 'unstageAll' : 'stageAll'}" title="${label}" aria-label="${label}"><i class="codicon codicon-${staged ? 'remove' : 'add'}"></i></button>`
+      : '';
+    const items = files.length
+      ? files.map((f, i) => cpFileHtml(sec, f, i)).join('')
+      : `<li class="cp-empty muted">${staged ? 'Nothing staged' : 'No changes'}</li>`;
+    return `<div class="d-files cp-sec">
+  <div class="d-files-head"><strong>${staged ? 'Staged' : 'Unstaged'}</strong><span class="cp-n">${files.length}</span><span class="cp-grow"></span>${act}</div>
+  <ul>${items}</ul>
+</div>`;
+  }
+
+  function cpFileHtml(sec, f, i) {
+    const slash = f.path.lastIndexOf('/');
+    const name = f.path.slice(slash + 1);
+    const dir = slash >= 0 ? f.path.slice(0, slash) : '';
+    const stat = f.untracked
+      ? '<span class="muted">untracked</span>'
+      : f.status === 'U'
+        ? '<span class="muted">conflict</span>'
+        : f.added === null || f.added === undefined
+          ? ''
+          : `<span class="add">+${f.added}</span><span class="del">−${f.deleted}</span>`;
+    const ref = `data-sec="${sec}" data-i="${i}"`;
+    const btn = (act, icon, label) =>
+      `<button class="icon cp-act" data-cp="${act}" ${ref} title="${label}" aria-label="${label}: ${esc(name)}"><i class="codicon codicon-${icon}"></i></button>`;
+    // Fixed slots so stats line up whichever actions a row has.
+    const gap = '<span class="cp-gap"></span>';
+    let acts = f.status !== 'D' ? btn('open', 'go-to-file', 'Open File') : gap;
+    if (sec === 'unstaged') acts += f.status !== 'U' ? btn('discard', 'discard', f.untracked ? 'Delete File' : 'Discard Changes') : gap;
+    acts += sec === 'staged' ? btn('unstage', 'remove', 'Unstage') : btn('stage', 'add', f.status === 'U' ? 'Stage (mark resolved)' : 'Stage');
+    const tip = (f.oldPath ? `Renamed from ${f.oldPath}\n` : '') + (sec === 'staged' ? 'HEAD ↔ Index' : f.untracked ? 'Untracked' : 'Index ↔ Working Tree');
+    return `<li>
+  <button class="file cp-file" data-cp="diff" ${ref} title="${esc(tip)}">
+    <span class="st st-${f.status}" title="${statusName(f.status)}">${f.status}</span>
+    <span class="fname">${esc(name)}</span>
+    <span class="fdir">${esc(dir)}</span>
+    <span class="fstat">${stat}</span>
+  </button>${acts}
+</li>`;
+  }
+
+  function cpAction(act, sec, i) {
+    const s = state.details.status;
+    const f = sec ? cpFiles(sec)[i] : null;
+    if (sec && !f) return;
+    if (act === 'diff') post('openStatusDiff', { file: f, staged: sec === 'staged' });
+    else if (act === 'open') post('openFile', { path: f.path });
+    else if (act === 'stage' || act === 'unstage' || act === 'discard') post(act, { files: [f] });
+    else if (act === 'stageAll' && s.unstaged.length) post('stage', { files: s.unstaged });
+    else if (act === 'unstageAll' && s.staged.length) post('unstage', { files: s.staged });
+    else if (act === 'commit') commitNow();
+  }
+
+  function commitMessage() {
+    const s = state.draft.summary.trim();
+    const b = state.draft.body.trim();
+    return s ? (b ? `${s}\n\n${b}` : s) : '';
+  }
+
+  function canCommit() {
+    const s = state.details && state.details.status;
+    if (!s || !commitMessage()) return false;
+    return state.draft.amend || s.staged.length > 0 || s.unstaged.some((f) => !f.untracked && f.status !== 'U');
+  }
+
+  function commitNow() {
+    if (canCommit()) post('commit', { message: commitMessage(), amend: state.draft.amend });
+  }
+
+  function updateCommitBox() {
+    const s = state.details.status;
+    const all = !state.draft.amend && !s.staged.length;
+    const btn = /** @type {HTMLButtonElement} */ ($('cp-commit'));
+    btn.textContent = state.draft.amend ? 'Amend Commit' : all ? 'Commit All' : 'Commit';
+    btn.title = `${state.draft.amend ? 'Replace the last commit' : all ? 'Stage all tracked changes and commit' : 'Commit staged changes'} (Ctrl+Enter)`;
+    btn.disabled = !canCommit();
+    const n = state.draft.summary.length;
+    const count = $('cp-count');
+    count.textContent = n ? String(SUMMARY_HINT - n) : '';
+    count.classList.toggle('over', n > SUMMARY_HINT);
+    count.title = `Characters left of ${SUMMARY_HINT} (a soft limit for the summary line)`;
+    /** @type {HTMLInputElement} */ ($('cp-amend')).disabled = !state.head;
+  }
+
+  function syncDraftInputs() {
+    /** @type {HTMLInputElement} */ ($('cp-summary')).value = state.draft.summary;
+    /** @type {HTMLTextAreaElement} */ ($('cp-body')).value = state.draft.body;
+    /** @type {HTMLInputElement} */ ($('cp-amend')).checked = state.draft.amend;
+  }
+
+  /** Amend prefills the last message into an empty box, and takes it back out if left unedited. */
+  function setAmend(on) {
+    const [lastSummary, ...rest] = ((state.details && state.details.lastMessage) || '').split('\n');
+    const lastBody = rest.join('\n').trim();
+    const d = state.draft;
+    if (on && !d.summary.trim() && !d.body.trim()) {
+      d.summary = lastSummary;
+      d.body = lastBody;
+    } else if (!on && d.summary === lastSummary && d.body === lastBody) {
+      d.summary = '';
+      d.body = '';
+    }
+    d.amend = on;
+    syncDraftInputs();
+    persist();
+    updateCommitBox();
+  }
+
+  function clearDraft() {
+    state.draft = { summary: '', body: '', amend: false };
+    persist();
+    if ($('cp-summary') && state.details && state.details.status) {
+      syncDraftInputs();
+      updateCommitBox();
+    }
+  }
+
+  function cpFocused() {
+    const a = /** @type {HTMLElement} */ (document.activeElement);
+    return a && a.classList.contains('cp-file') ? { sec: a.dataset.sec, i: Number(a.dataset.i) } : null;
+  }
+
+  /** After a refresh, keeps keyboard focus at the same spot in the same list (or the other list if it emptied). */
+  function restoreCpFocus(f) {
+    if (!f) return;
+    const list = (sec) => [...detailsEl.querySelectorAll(`.cp-file[data-sec="${sec}"]`)];
+    let items = list(f.sec);
+    if (!items.length) items = list(f.sec === 'staged' ? 'unstaged' : 'staged');
+    const el = /** @type {HTMLElement} */ (items[Math.min(f.i, items.length - 1)]);
+    if (el) el.focus();
+  }
+
+  // Capture phase, ahead of the commit-details click handler.
+  detailsEl.addEventListener(
+    'click',
+    (e) => {
+      const t = /** @type {HTMLElement} */ (e.target).closest('[data-cp]');
+      if (!t || !state.details || !state.details.status) return;
+      e.stopPropagation();
+      cpAction(t.dataset.cp, t.dataset.sec, Number(t.dataset.i));
+    },
+    true,
+  );
+
+  detailsEl.addEventListener('input', (e) => {
+    const t = /** @type {HTMLInputElement} */ (e.target);
+    if (t.id === 'cp-summary') state.draft.summary = t.value;
+    else if (t.id === 'cp-body') state.draft.body = t.value;
+    else return;
+    persist();
+    updateCommitBox();
+  });
+
+  detailsEl.addEventListener('change', (e) => {
+    const t = /** @type {HTMLInputElement} */ (e.target);
+    if (t.id === 'cp-amend') setAmend(t.checked);
+  });
+
+  detailsEl.addEventListener('keydown', (e) => {
+    const t = /** @type {HTMLElement} */ (e.target);
+    const inBox = t.id === 'cp-summary' || t.id === 'cp-body';
+    if (inBox && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) commitNow();
+    else if (t.id === 'cp-summary' && e.key === 'Enter') $('cp-body').focus();
+    else if ((inBox || t.classList.contains('cp-file')) && e.key === 'Escape') scroller.focus();
+    else if (t.classList.contains('cp-file') && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      const items = [...detailsEl.querySelectorAll('.cp-file')];
+      const next = /** @type {HTMLElement} */ (items[items.indexOf(t) + (e.key === 'ArrowDown' ? 1 : -1)]);
+      if (next) next.focus();
+    } else if (t.classList.contains('cp-file') && e.key === ' ') {
+      cpAction(t.dataset.sec === 'staged' ? 'unstage' : 'stage', t.dataset.sec, Number(t.dataset.i));
+    } else return;
+    e.preventDefault();
+  });
+  // Space on a button clicks it on keyup; here Space stages, Enter opens the diff.
+  detailsEl.addEventListener('keyup', (e) => {
+    if (e.key === ' ' && /** @type {HTMLElement} */ (e.target).classList.contains('cp-file')) e.preventDefault();
+  });
 
   // ---- selection & navigation -------------------------------------------------
 
@@ -836,8 +1219,24 @@ ${filesHtml(d)}`;
     const row = /** @type {HTMLElement} */ (e.target).closest('.row');
     if (!row) return;
     const r = state.rows[Number(row.dataset.i)];
-    if (r) select(r.hash);
+    if (!r) return;
+    // Right-click on another row keeps the selection so "Compare with Selected" has something to
+    // compare with; the row is outlined instead. Don't stop the event: VS Code needs it for its menu.
+    if (e.button === 2 && state.selected && r.hash !== state.selected) {
+      setMenuRow(r.hash);
+      return;
+    }
+    setMenuRow(null);
+    select(r.hash);
   });
+
+  function setMenuRow(hash) {
+    if (state.menuRow === hash) return;
+    state.menuRow = hash;
+    render();
+  }
+  window.addEventListener('keydown', () => setMenuRow(null), true);
+  window.addEventListener('mousedown', (e) => { if (e.button !== 2) setMenuRow(null); }, true);
 
   body.addEventListener('dblclick', (e) => {
     const row = /** @type {HTMLElement} */ (e.target).closest('.row');
@@ -865,6 +1264,8 @@ ${filesHtml(d)}`;
     } else if (e.key === 'Escape') {
       if (state.selected) closeDetails();
       else if (state.pin) setPin(null);
+      else if (state.lines) setLines(null);
+      else if (state.history) setHistory(null);
     } else if ((e.key === 'l' || e.key === 'L') && !e.ctrlKey && !e.metaKey && !e.altKey) toggleLanePin();
     else if ((e.ctrlKey || e.metaKey) && e.key === 'c' && state.selected && state.selected !== WIP) {
       post('copy', { text: state.selected, label: 'commit SHA' });
@@ -927,6 +1328,14 @@ ${filesHtml(d)}`;
     e.preventDefault();
   });
 
+  // Ctrl/Cmd+Z: undo the last git action (the extension confirms first).
+  scroller.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'z' || e.key === 'Z')) {
+      e.preventDefault();
+      post('undo');
+    }
+  });
+
   // ---- keyboard help (?) -----------------------------------------------------
 
   const KEYS = [
@@ -941,6 +1350,7 @@ ${filesHtml(d)}`;
     ['Ctrl+C', 'Copy SHA'],
     ['Ctrl+click', 'Compare two commits'],
     ['Ctrl+F / F3', 'Search / next match'],
+    ['Ctrl+Z', 'Undo last action'],
     ['Esc', 'Close details or highlight'],
   ];
   const helpEl = document.createElement('div');
@@ -967,7 +1377,7 @@ ${filesHtml(d)}`;
         e.preventDefault();
         e.stopPropagation();
         toggleHelp(false);
-      } else if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target instanceof HTMLInputElement)) {
+      } else if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement)) {
         e.preventDefault();
         toggleHelp(true);
       }
@@ -988,6 +1398,7 @@ ${filesHtml(d)}`;
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
       state.query = searchInput.value.trim();
+      if (state.lines) setLines(null);
       state.matches = [];
       state.matchSet = new Set();
       state.matchPos = -1;
@@ -1148,6 +1559,9 @@ ${filesHtml(d)}`;
       detailsWidth: state.detailsWidth,
       detailsHeight: state.detailsHeight,
       pin: state.pin,
+      history: state.history,
+      lines: state.lines,
+      draft: state.draft,
     });
   }
 
@@ -1315,7 +1729,148 @@ ${filesHtml(d)}`;
     if (head !== undefined) draw(rulerColor('--ruler-head'), head, 0, bar, Math.max(3, tick));
   }
 
+  // ---- drag a branch label onto a label or commit: merge / rebase ---------------
+  // Pointer events, not HTML5 drag and drop (unreliable in webviews). Nothing happens until
+  // the pointer moves 4px, so a plain click on a label is untouched. The host shows the menu.
+
+  const DRAG_PX = 4;
+  const EDGE = 28;
+  /** { src, kind, srcSha, x0, y0, x, y, id, active, ghost, el, target, raf } while a label is pressed. */
+  let drag = null;
+
+  function refCtx(el) {
+    try {
+      return JSON.parse(el.dataset.vscodeContext || '');
+    } catch {
+      return null;
+    }
+  }
+
+  body.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    const ref = /** @type {HTMLElement} */ (e.target).closest('.ref');
+    const ctx = ref && refCtx(ref);
+    if (!ctx || (ctx.refKind !== 'branch' && ctx.refKind !== 'remote')) return;
+    const row = /** @type {HTMLElement} */ (ref.closest('.row'));
+    const r = row && state.rows[Number(row.dataset.i)];
+    if (!r) return;
+    drag = { src: ctx.refName, kind: ctx.refKind, srcSha: r.hash, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, id: e.pointerId, active: false, ghost: null, el: null, target: null, raf: 0 };
+    window.addEventListener('pointermove', onDragMove, true);
+    window.addEventListener('pointerup', onDragUp, true);
+    window.addEventListener('pointercancel', endDrag, true);
+    window.addEventListener('keydown', onDragKey, true);
+  });
+
+  function onDragMove(e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+    if (!drag.active) {
+      if (Math.hypot(drag.x - drag.x0, drag.y - drag.y0) < DRAG_PX) return;
+      startDrag();
+    }
+    drag.ghost.style.transform = `translate(${drag.x + 12}px, ${drag.y + 10}px)`;
+    updateDropTarget();
+    autoScroll();
+  }
+
+  function startDrag() {
+    drag.active = true;
+    const g = document.createElement('div');
+    g.className = 'drag-ghost';
+    g.innerHTML = `<i class="codicon codicon-${drag.kind === 'remote' ? 'cloud' : 'git-branch'}"></i><span>${esc(drag.src)}</span>`;
+    document.body.appendChild(g);
+    drag.ghost = g;
+    document.documentElement.classList.add('ref-dragging');
+    window.getSelection()?.removeAllRanges();
+    try {
+      body.setPointerCapture(drag.id); // keep getting moves outside the list
+    } catch {
+      // pointer already gone
+    }
+    clearTimeout(hoverTimer);
+    setHover(-1);
+  }
+
+  /** What's under the pointer: another local branch label, or a commit row (for a local branch). */
+  function dropTargetAt(x, y) {
+    const el = /** @type {HTMLElement | null} */ (document.elementFromPoint(x, y));
+    if (!el || !body.contains(el)) return null;
+    const ref = el.closest('.ref');
+    const ctx = ref && refCtx(ref);
+    if (ctx && ctx.refKind === 'branch' && ctx.refName !== drag.src) return { el: ref, onto: ctx.refName };
+    const row = /** @type {HTMLElement | null} */ (el.closest('.row'));
+    const r = row && state.rows[Number(row.dataset.i)];
+    if (!r || r.wip || r.stash || r.hash === drag.srcSha || drag.kind !== 'branch') return null;
+    return { el: row, sha: r.hash };
+  }
+
+  function updateDropTarget() {
+    if (!drag || !drag.active) return;
+    const t = dropTargetAt(drag.x, drag.y);
+    if (drag.el && drag.el !== (t && t.el)) drag.el.classList.remove('drop-target');
+    if (t) t.el.classList.add('drop-target');
+    drag.el = t && t.el;
+    drag.target = t && { onto: t.onto, sha: t.sha };
+  }
+
+  // Rows are re-rendered on scroll and refresh: re-mark the target on the new elements.
+  new MutationObserver(() => {
+    if (drag && drag.active) {
+      drag.el = null;
+      updateDropTarget();
+    }
+  }).observe(body, { childList: true });
+
+  /** Scrolls while the pointer is near the list's top or bottom edge, faster the closer it is. */
+  function autoScroll() {
+    if (drag.raf) return;
+    const step = () => {
+      drag.raf = 0;
+      if (!drag || !drag.active) return;
+      const box = scroller.getBoundingClientRect();
+      const d = drag.y < box.top + EDGE ? drag.y - (box.top + EDGE) : drag.y > box.bottom - EDGE ? drag.y - (box.bottom - EDGE) : 0;
+      if (!d) return;
+      scroller.scrollTop += Math.max(-EDGE, Math.min(EDGE, d)) / 2;
+      drag.raf = requestAnimationFrame(step);
+    };
+    drag.raf = requestAnimationFrame(step);
+  }
+
+  function onDragUp(e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    const d = drag;
+    endDrag();
+    if (d.active && d.target) post('dropRef', { refName: d.src, refKind: d.kind, onto: d.target.onto, sha: d.target.sha });
+  }
+
+  function onDragKey(e) {
+    if (!drag || !drag.active || e.key !== 'Escape') return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    endDrag();
+  }
+
+  function endDrag() {
+    if (!drag) return;
+    window.removeEventListener('pointermove', onDragMove, true);
+    window.removeEventListener('pointerup', onDragUp, true);
+    window.removeEventListener('pointercancel', endDrag, true);
+    window.removeEventListener('keydown', onDragKey, true);
+    cancelAnimationFrame(drag.raf);
+    if (drag.el) drag.el.classList.remove('drop-target');
+    if (drag.ghost) drag.ghost.remove();
+    document.documentElement.classList.remove('ref-dragging');
+    try {
+      if (body.hasPointerCapture(drag.id)) body.releasePointerCapture(drag.id);
+    } catch {
+      // already released
+    }
+    drag = null;
+  }
+
   updateScopeButtons();
   updateFocusChip();
-  post('ready');
+  updateHistoryChips();
+  post('ready', { history: state.history });
 })();
