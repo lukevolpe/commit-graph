@@ -60,6 +60,7 @@
     rowsVersion: 0,
     /** Compare mode: { base, other, from, to, files, error }; active only while base is selected. */
     cmp: null,
+    menuRow: null,
     /** Working trees of the repo (see Worktree in worktrees.ts), `current` marks this one. */
     worktrees: [],
     /** File history mode: repo-relative path the host limits the graph to, or null. */
@@ -128,6 +129,7 @@
         }
         break;
       case 'compareWith':
+        state.menuRow = null;
         startCompare(m.sha);
         break;
       case 'lineMarks':
@@ -314,7 +316,7 @@
     const dim = state.matches.length > 0 && !state.matchSet.has(r.hash);
     const off = !!f && !f.marks.get(i)?.node;
     const cmpRow = compareActive() && r.hash === state.cmp.other;
-    const cls = ['row', sel && 'selected', cmpRow && 'compare', dim && 'dim', off && 'off', r.hash === state.head && 'head', r.wip && 'wip-row', r.stash && 'stash-row']
+    const cls = ['row', sel && 'selected', cmpRow && 'compare', dim && 'dim', off && 'off', r.hash === state.menuRow && 'menu-row', r.hash === state.head && 'head', r.wip && 'wip-row', r.stash && 'stash-row']
       .filter(Boolean)
       .join(' ');
     const pinned = focusInfo();
@@ -926,10 +928,7 @@ ${filesHtml(d)}`;
       const row = /** @type {HTMLElement} */ (e.target).closest('.row');
       const r = row && state.rows[Number(row.dataset.i)];
       if (!r || !state.selected) return;
-      if (e.button === 2) {
-        // Right-click keeps the selection so "Compare with Selected" has something to compare with.
-        if (r.hash !== state.selected) e.stopPropagation();
-      } else if (e.button === 0 && (e.ctrlKey || e.metaKey)) {
+      if (e.button === 0 && (e.ctrlKey || e.metaKey)) {
         e.stopPropagation();
         if (r.hash !== state.selected) startCompare(r.hash);
       } else if (e.button === 0) {
@@ -1220,8 +1219,24 @@ ${filesHtml(d)}`;
     const row = /** @type {HTMLElement} */ (e.target).closest('.row');
     if (!row) return;
     const r = state.rows[Number(row.dataset.i)];
-    if (r) select(r.hash);
+    if (!r) return;
+    // Right-click on another row keeps the selection so "Compare with Selected" has something to
+    // compare with; the row is outlined instead. Don't stop the event: VS Code needs it for its menu.
+    if (e.button === 2 && state.selected && r.hash !== state.selected) {
+      setMenuRow(r.hash);
+      return;
+    }
+    setMenuRow(null);
+    select(r.hash);
   });
+
+  function setMenuRow(hash) {
+    if (state.menuRow === hash) return;
+    state.menuRow = hash;
+    render();
+  }
+  window.addEventListener('keydown', () => setMenuRow(null), true);
+  window.addEventListener('mousedown', (e) => { if (e.button !== 2) setMenuRow(null); }, true);
 
   body.addEventListener('dblclick', (e) => {
     const row = /** @type {HTMLElement} */ (e.target).closest('.row');

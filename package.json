@@ -473,197 +473,197 @@
       "webview/context": [
         {
           "command": "commitGraph.checkoutCommit",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'commit'",
           "group": "1_checkout@1"
         },
         {
           "command": "commitGraph.createBranch",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'commit'",
           "group": "1_checkout@2"
         },
         {
           "command": "commitGraph.createTag",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'commit'",
           "group": "1_checkout@3"
         },
         {
           "command": "commitGraph.cherryPick",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'commit'",
           "group": "2_integrate@1"
         },
         {
           "command": "commitGraph.merge",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'commit'",
           "group": "2_integrate@2"
         },
         {
           "command": "commitGraph.rebase",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'commit'",
           "group": "2_integrate@3"
         },
         {
           "command": "commitGraph.revert",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'commit'",
           "group": "2_integrate@4"
         },
         {
           "command": "commitGraph.reset",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'commit'",
           "group": "3_reset@1"
         },
         {
           "command": "commitGraph.compareWorking",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'commit'",
           "group": "4_compare@1"
         },
         {
           "command": "commitGraph.compareWithSelected",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'commit' && canCompare",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'commit' && canCompare",
           "group": "4_compare@0"
         },
         {
           "command": "commitGraph.openOnRemote",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'commit'",
           "group": "4_compare@2"
         },
         {
           "command": "commitGraph.copySha",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'commit'",
           "group": "5_copy@1"
         },
         {
           "command": "commitGraph.copyMessage",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'commit'",
           "group": "5_copy@2"
         },
         {
           "command": "commitGraph.checkoutBranch",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind =~ /^(branch|remote)$/ && !refCurrent",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'ref' && refKind =~ /^(branch|remote)$/ && !refCurrent",
           "group": "1_checkout@1"
         },
         {
           "command": "commitGraph.createBranch",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind == 'tag'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'ref' && refKind == 'tag'",
           "group": "1_checkout@2"
         },
         {
           "command": "commitGraph.merge",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind =~ /^(branch|remote)$/ && !refCurrent",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'ref' && refKind =~ /^(branch|remote)$/ && !refCurrent",
           "group": "2_integrate@1"
         },
         {
           "command": "commitGraph.rebase",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind =~ /^(branch|remote)$/ && !refCurrent",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'ref' && refKind =~ /^(branch|remote)$/ && !refCurrent",
           "group": "2_integrate@2"
         },
         {
           "command": "commitGraph.renameBranch",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind == 'branch'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'ref' && refKind == 'branch'",
           "group": "3_manage@1"
         },
         {
           "command": "commitGraph.deleteBranch",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind == 'branch' && !refCurrent",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'ref' && refKind == 'branch' && !refCurrent",
           "group": "3_manage@2"
         },
         {
           "command": "commitGraph.deleteTag",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind == 'tag'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'ref' && refKind == 'tag'",
           "group": "3_manage@2"
         },
         {
           "command": "commitGraph.copyRefName",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'ref'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'ref'",
           "group": "5_copy@1"
         },
         {
           "command": "commitGraph.copySha",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'ref'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'ref'",
           "group": "5_copy@2"
         },
         {
           "command": "commitGraph.highlightLane",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'commit' && !highlighted",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'commit' && !highlighted",
           "group": "4_compare@3"
         },
         {
           "command": "commitGraph.clearHighlight",
-          "when": "webviewId == 'commitGraph' && webviewSection =~ /^(commit|ref)$/ && highlighted",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection =~ /^(commit|ref)$/ && highlighted",
           "group": "4_compare@3"
         },
         {
           "command": "commitGraph.highlightRef",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && !highlighted",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'ref' && !highlighted",
           "group": "4_compare@3"
         },
         {
           "command": "commitGraph.applyStash",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'stash'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'stash'",
           "group": "1_stash@1"
         },
         {
           "command": "commitGraph.popStash",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'stash'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'stash'",
           "group": "1_stash@2"
         },
         {
           "command": "commitGraph.dropStash",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'stash'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'stash'",
           "group": "1_stash@3"
         },
         {
           "command": "commitGraph.copySha",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'stash'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'stash'",
           "group": "5_copy@1"
         },
         {
           "command": "commitGraph.createPullRequest",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind =~ /^(branch|remote)$/",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'ref' && refKind =~ /^(branch|remote)$/",
           "group": "4_remote@1"
         },
         {
           "command": "commitGraph.fetchRemote",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind == 'remote'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'ref' && refKind == 'remote'",
           "group": "4_remote@2"
         },
         {
           "command": "commitGraph.deleteRemoteBranch",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind == 'remote'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'ref' && refKind == 'remote'",
           "group": "3_manage@3"
         },
         {
           "command": "commitGraph.pushTag",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind == 'tag'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'ref' && refKind == 'tag'",
           "group": "4_remote@1"
         },
         {
           "command": "commitGraph.deleteRemoteTag",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind == 'tag'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'ref' && refKind == 'tag'",
           "group": "4_remote@2"
         },
         {
           "command": "commitGraph.stashChanges",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'wip'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'wip'",
           "group": "1_stash@1"
         },
         {
           "command": "commitGraph.createWorktree",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind =~ /^(branch|remote)$/ && !refCurrent && !worktreePath",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'ref' && refKind =~ /^(branch|remote)$/ && !refCurrent && !worktreePath",
           "group": "1_checkout@3"
         },
         {
           "command": "commitGraph.openWorktree",
-          "when": "webviewId == 'commitGraph' && webviewSection =~ /^(ref|worktree)$/ && worktreePath",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection =~ /^(ref|worktree)$/ && worktreePath",
           "group": "1_checkout@0"
         },
         {
           "command": "commitGraph.removeWorktree",
-          "when": "webviewId == 'commitGraph' && webviewSection =~ /^(ref|worktree)$/ && worktreePath",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection =~ /^(ref|worktree)$/ && worktreePath",
           "group": "3_manage@3"
         },
         {
           "command": "commitGraph.interactiveRebase",
-          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "when": "webviewId =~ /^commitGraph(\\.view)?$/ && webviewSection == 'commit'",
           "group": "2_integrate@5"
         }
       ],

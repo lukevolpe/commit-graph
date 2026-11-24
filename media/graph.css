@@ -312,6 +312,8 @@ button.icon:hover { background: var(--vscode-toolbar-hoverBackground); }
 #scroller:focus #rows .row.selected .col-date,
 #scroller:focus #rows .row.selected .col-sha { color: inherit; }
 
+#rows .row.menu-row { outline: 1px solid var(--vscode-list-focusOutline, var(--vscode-focusBorder)); outline-offset: -1px; }
+
 .row.dim > div:not(.col-graph) { opacity: 0.4; }
 .row.dim .col-graph { opacity: 0.55; }
 
