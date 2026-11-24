@@ -5,6 +5,8 @@ import { revisionUri } from './content';
 import * as path from 'node:path';
 import { dropChoices } from './drop';
 import { Remote, defaultBranch, getRemotes, isNonFastForward, pruneRemote, pullRequestUrl, splitRemoteRef } from './remotes';
+import { StashPushOptions, gitAtLeast, stashPushArgs } from './git';
+import { planUndo } from './undo';
 
 /** What VS Code passes from `data-vscode-context` on right-click. */
 interface Ctx {
@@ -441,6 +443,9 @@ const handlers: Record<string, Handler> = {
       if (ok) await run(p, `Remove remote ${r.name}`, ['remote', 'remove', r.name]);
     }
   },
+
+  stashChanges: async (repo, _ctx, p) => stashChanges(repo, p),
+  undo: async (repo, _ctx, p) => undoLast(repo, p),
 };
 
 const FORCE_PUSH = 'Force Push (with lease)';
@@ -515,6 +520,63 @@ async function addRemote(repo: string, remotes: Remote[], p: GraphController): P
   if (!url?.trim()) return;
   if (await run(p, `Add remote ${name.trim()}`, ['remote', 'add', name.trim(), url.trim()])) {
     await run(p, `Fetch ${name.trim()}`, ['fetch', name.trim()]);
+  }
+}
+
+/** Asks how to stash (tracked, with untracked, staged only) and for an optional message. */
+async function stashChanges(repo: string, p: GraphController) {
+  const status = await git(repo, ['status', '--porcelain']);
+  const lines = status.split('\n').filter(Boolean);
+  if (!lines.length) return vscode.window.showInformationMessage('No changes to stash.');
+  const untracked = lines.some((l) => l.startsWith('??'));
+  const staged = lines.some((l) => l[0] !== ' ' && l[0] !== '?');
+  const items: (vscode.QuickPickItem & { opts: StashPushOptions })[] = [
+    { label: 'Stash Changes', description: 'Staged and unstaged changes to tracked files', opts: {} },
+    { label: 'Stash Including Untracked', description: 'Also new files git does not track yet', opts: { untracked: true } },
+  ];
+  if (staged && gitAtLeast(await git(repo, ['version']), 2, 35)) {
+    items.push({ label: 'Stash Staged Only', description: 'Only what is staged', opts: { staged: true } });
+  }
+  const pick = await vscode.window.showQuickPick(items, {
+    title: 'Stash',
+    placeHolder: untracked ? 'You have untracked files' : undefined,
+  });
+  if (!pick) return;
+  const message = await vscode.window.showInputBox({
+    title: pick.label,
+    prompt: 'Message for the stash. Leave empty for the default "WIP on <branch>".',
+  });
+  if (message === undefined) return;
+  return run(p, 'Stash changes', stashPushArgs({ ...pick.opts, message }));
+}
+
+/** Undoes the last HEAD reflog entry after a modal confirm; extra warning if it drops pushed commits. */
+async function undoLast(repo: string, p: GraphController) {
+  const plan = await planUndo(repo);
+  if ('error' in plan) return vscode.window.showInformationMessage(plan.error);
+  if (plan.pushed) {
+    const n = plan.pushed === 1 ? '1 commit' : `${plan.pushed} commits`;
+    const ok = await confirm(
+      `${plan.message} ${n} already pushed to ${plan.upstream}.`,
+      `${plan.detail}\n\nThe pushed ${plan.pushed === 1 ? 'commit stays' : 'commits stay'} on ${plan.upstream}; publishing the undo needs a force-push, which rewrites history others may have.`,
+      'Undo Anyway',
+    );
+    if (!ok) return;
+  } else if (!(await confirm(plan.message, plan.detail, 'Undo'))) return;
+  try {
+    await p.withBusy('Undoing', () => git(repo, plan.args));
+    void vscode.window.setStatusBarMessage(`$(check) Undid ${plan.action.label}`, 3000);
+  } catch (e) {
+    const msg = errorText(e);
+    if (/not uptodate|would be overwritten|cannot merge|uncommitted/i.test(msg)) {
+      void vscode.window.showWarningMessage(
+        `Can't undo the ${plan.action.label}: uncommitted changes touch files it would change. Commit or stash them first.`,
+      );
+    } else {
+      void vscode.window.showErrorMessage(`Undo failed: ${msg}`);
+    }
+  } finally {
+    p.refresh();
   }
 }
 

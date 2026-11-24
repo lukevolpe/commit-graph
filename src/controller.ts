@@ -51,6 +51,7 @@ type InMessage =
   | { type: 'copy'; text: string; label: string }
   | { type: 'pickRef' }
   | { type: 'dropRef'; refName: string; refKind: 'branch' | 'remote'; onto?: string; sha?: string }
+  | { type: 'undo' }
   | { type: 'layout'; width: number; height: number };
 
 type Row = Commit & { graph: GraphRow; wip?: boolean; stash?: string };
@@ -279,6 +280,9 @@ export class GraphController {
         break;
       case 'pickRef':
         void this.pickRef().catch((e) => vscode.window.showErrorMessage(errorText(e)));
+        break;
+      case 'undo':
+        void vscode.commands.executeCommand('commitGraph.undo');
         break;
     }
   }

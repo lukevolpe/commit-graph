@@ -927,6 +927,14 @@ ${filesHtml(d)}`;
     e.preventDefault();
   });
 
+  // Ctrl/Cmd+Z: undo the last git action (the extension confirms first).
+  scroller.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'z' || e.key === 'Z')) {
+      e.preventDefault();
+      post('undo');
+    }
+  });
+
   // ---- keyboard help (?) -----------------------------------------------------
 
   const KEYS = [
@@ -941,6 +949,7 @@ ${filesHtml(d)}`;
     ['Ctrl+C', 'Copy SHA'],
     ['Ctrl+click', 'Compare two commits'],
     ['Ctrl+F / F3', 'Search / next match'],
+    ['Ctrl+Z', 'Undo last action'],
     ['Esc', 'Close details or highlight'],
   ];
   const helpEl = document.createElement('div');

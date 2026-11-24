@@ -218,6 +218,18 @@
         "title": "Manage Remotes…",
         "category": "Commit Graph",
         "icon": "$(remote)"
+      },
+      {
+        "command": "commitGraph.stashChanges",
+        "title": "Stash Changes…",
+        "category": "Commit Graph",
+        "icon": "$(archive)"
+      },
+      {
+        "command": "commitGraph.undo",
+        "title": "Undo Last Action",
+        "category": "Commit Graph",
+        "icon": "$(discard)"
       }
     ],
     "menus": {
@@ -528,6 +540,11 @@
           "command": "commitGraph.deleteRemoteTag",
           "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind == 'tag'",
           "group": "4_remote@2"
+        },
+        {
+          "command": "commitGraph.stashChanges",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'wip'",
+          "group": "1_stash@1"
         }
       ],
       "view/title": [
@@ -565,6 +582,16 @@
           "command": "commitGraph.manageRemotes",
           "when": "view == commitGraph.view",
           "group": "1_remotes@1"
+        },
+        {
+          "command": "commitGraph.undo",
+          "when": "view == commitGraph.view",
+          "group": "navigation@7"
+        },
+        {
+          "command": "commitGraph.stashChanges",
+          "when": "view == commitGraph.view",
+          "group": "1_git@1"
         }
       ]
     },
