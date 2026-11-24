@@ -7,6 +7,9 @@ import { dropChoices } from './drop';
 import { Remote, defaultBranch, getRemotes, isNonFastForward, pruneRemote, pullRequestUrl, splitRemoteRef } from './remotes';
 import { StashPushOptions, gitAtLeast, stashPushArgs } from './git';
 import { planUndo } from './undo';
+import { readdirSync } from 'node:fs';
+import { Worktree, defaultWorktreePath, getWorktrees, otherWorktree, samePath } from './worktrees';
+import { pickRepo } from './repos';
 
 /** What VS Code passes from `data-vscode-context` on right-click. */
 interface Ctx {
@@ -17,6 +20,8 @@ interface Ctx {
   stashRef?: string;
   /** Drag and drop: the branch label `refName` was dropped on (else `sha` is the commit row). */
   onto?: string;
+  /** Worktree folder: on a branch label checked out elsewhere, or a detached worktree's label. */
+  worktreePath?: string;
 }
 
 type Handler = (repo: string, ctx: Ctx, panel: GraphController) => Promise<unknown>;
@@ -189,6 +194,9 @@ const handlers: Record<string, Handler> = {
   },
 
   checkoutBranch: async (repo, { refName, refKind }, p) => {
+    const branch = refKind === 'remote' ? refName!.slice(refName!.indexOf('/') + 1) : refName!;
+    // git refuses to check out a branch another worktree has: offer that worktree instead.
+    if (await offerOtherWorktree(repo, branch)) return;
     if (refKind !== 'remote') return run(p, `Switch to ${refName}`, ['switch', refName!]);
     const local = refName!.slice(refName!.indexOf('/') + 1);
     let exists = true;
@@ -297,6 +305,10 @@ const handlers: Record<string, Handler> = {
       if (!(await run(p, label, step))) return;
     }
   },
+
+  createWorktree: async (repo, ctx, p) => createWorktree(repo, ctx, p),
+  openWorktree: async (_r, { worktreePath }) => openWorktree(worktreePath!, 'window'),
+  removeWorktree: async (repo, { worktreePath }) => removeWorktree(repo, worktreePath!),
 
   deleteTag: async (repo, { refName }, p) => {
     if (await confirm(`Delete tag ${refName}?`, 'Only the local tag is deleted.', 'Delete')) {
@@ -607,6 +619,147 @@ async function fastForwardable(repo: string, branch: string, to: string): Promis
   }
 }
 
+// ---- worktrees -------------------------------------------------------------------
+
+/** If another worktree has `branch` checked out, says so and offers to open it. True when it does. */
+async function offerOtherWorktree(repo: string, branch: string): Promise<boolean> {
+  const wt = otherWorktree(await getWorktrees(repo).catch(() => []), branch, repo);
+  if (!wt) return false;
+  const open = 'Open Worktree';
+  const add = 'Add to Workspace';
+  const pick = await vscode.window.showInformationMessage(`${branch} is checked out in ${wt.path}.`, open, add);
+  if (pick === open) await openWorktree(wt.path, 'window');
+  else if (pick === add) await openWorktree(wt.path, 'workspace');
+  return true;
+}
+
+async function openWorktree(folder: string, where: 'window' | 'workspace'): Promise<void> {
+  const uri = vscode.Uri.file(folder);
+  if (where === 'window') {
+    await vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
+  } else if (!vscode.workspace.workspaceFolders?.some((f) => samePath(f.uri.fsPath, folder))) {
+    vscode.workspace.updateWorkspaceFolders(vscode.workspace.workspaceFolders?.length ?? 0, null, { uri });
+  }
+}
+
+/** After a worktree is made: open it in a new window or add it to the workspace. */
+async function offerOpenWorktree(folder: string): Promise<void> {
+  const open = 'Open in New Window';
+  const add = 'Add to Workspace';
+  const pick = await vscode.window.showInformationMessage(`Worktree created at ${folder}.`, open, add);
+  if (pick === open) await openWorktree(folder, 'window');
+  else if (pick === add) await openWorktree(folder, 'workspace');
+}
+
+/** New worktree for a branch label. A remote branch gets a local tracking branch unless one exists. */
+async function createWorktree(repo: string, { refName, refKind }: Ctx, p: GraphController): Promise<void> {
+  let branch = refName!;
+  let args: string[] | undefined;
+  if (refKind === 'remote') {
+    branch = refName!.slice(refName!.indexOf('/') + 1);
+    try {
+      await git(repo, ['rev-parse', '--verify', '-q', `refs/heads/${branch}`]);
+    } catch {
+      args = ['--track', '-b', branch]; // new local branch from the remote one
+    }
+  }
+  if (await offerOtherWorktree(repo, branch)) return;
+  const suggested = defaultWorktreePath(repo, branch);
+  const input = await vscode.window.showInputBox({
+    title: `New worktree for ${branch}`,
+    prompt: 'Folder for the worktree. It must not exist yet, or be empty.',
+    value: suggested,
+    valueSelection: [suggested.length - path.basename(suggested).length, suggested.length],
+    validateInput: (v) => {
+      if (!v.trim()) return 'Enter a folder';
+      try {
+        if (readdirSync(path.resolve(repo, v.trim())).length) return 'That folder exists and is not empty';
+      } catch {
+        // doesn't exist: fine
+      }
+      return null;
+    },
+  });
+  if (!input?.trim()) return;
+  const folder = path.resolve(repo, input.trim());
+  const ok = args
+    ? await run(p, `Create worktree for ${refName}`, ['worktree', 'add', ...args, folder, refName!])
+    : await run(p, `Create worktree for ${branch}`, ['worktree', 'add', folder, branch]);
+  if (ok) await offerOpenWorktree(folder);
+}
+
+/** Removes a worktree after confirming; a dirty one needs a second, explicit confirm to force. */
+async function removeWorktree(repo: string, folder: string): Promise<void> {
+  if (samePath(folder, repo)) {
+    void vscode.window.showWarningMessage('This is the worktree the graph is showing. Open another one to remove it.');
+    return;
+  }
+  const name = path.basename(folder);
+  if (!(await confirm(`Remove worktree ${name}?`, `${folder} is deleted. Its branch is kept.`, 'Remove'))) return;
+  const attempt = async (force: boolean) => {
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `Remove worktree ${name}` }, () =>
+      git(repo, ['worktree', 'remove', ...(force ? ['--force'] : []), folder]),
+    );
+  };
+  try {
+    try {
+      await attempt(false);
+    } catch (e) {
+      if (!/modified or untracked/i.test(errorText(e))) throw e;
+      const force = await confirm(
+        `${name} has uncommitted changes.`,
+        'Removing it anyway deletes those changes for good.',
+        'Remove Anyway',
+      );
+      if (force) await attempt(true);
+    }
+  } catch (e) {
+    void vscode.window.showErrorMessage(`Remove worktree failed: ${errorText(e)}`);
+  } finally {
+    GraphController.forRepo(repo)?.refresh();
+  }
+}
+
+/** "Commit Graph: Worktrees…": pick a worktree, then open, add, or remove it; or prune stale ones. */
+async function worktreesCommand(): Promise<void> {
+  const repo = GraphController.active?.repo ?? (await pickRepo());
+  if (!repo) return;
+  const list = await getWorktrees(repo);
+  type Item = vscode.QuickPickItem & { wt?: Worktree; prune?: boolean };
+  const items: Item[] = list.map((w) => {
+    const current = samePath(w.path, repo);
+    const flags = [current && 'current', w.locked && 'locked', w.prunable && 'missing'].filter(Boolean).join(', ');
+    return {
+      label: `$(${current ? 'check' : 'worktree'}) ${path.basename(w.path)}`,
+      description: (w.branch ?? `detached at ${short(w.head)}`) + (flags ? `  (${flags})` : ''),
+      detail: w.path,
+      wt: w,
+    };
+  });
+  items.push(
+    { label: '', kind: vscode.QuickPickItemKind.Separator },
+    { label: '$(trash) Prune Stale Worktrees', description: 'Forget worktrees whose folder is gone', prune: true },
+  );
+  const pick = await vscode.window.showQuickPick(items, { placeHolder: 'Worktrees', matchOnDescription: true, matchOnDetail: true });
+  if (!pick) return;
+  if (pick.prune) {
+    const out = (await git(repo, ['worktree', 'prune', '-v'])).trim();
+    GraphController.forRepo(repo)?.refresh();
+    void vscode.window.showInformationMessage(out ? `Pruned: ${out}` : 'No stale worktrees to prune.');
+    return;
+  }
+  const wt = pick.wt!;
+  const isMain = wt === list[0];
+  const acts = [
+    { label: '$(empty-window) Open in New Window', act: 'window' },
+    { label: '$(add) Add to Workspace', act: 'workspace' },
+    ...(isMain || samePath(wt.path, repo) ? [] : [{ label: '$(trash) Remove…', act: 'remove' }]),
+  ];
+  const act = await vscode.window.showQuickPick(acts, { title: wt.path });
+  if (act?.act === 'remove') await removeWorktree(repo, wt.path);
+  else if (act) await openWorktree(wt.path, act.act as 'window' | 'workspace');
+}
+
 /** True if any of the git config keys is set. */
 async function configured(repo: string, ...keys: string[]): Promise<boolean> {
   for (const k of keys) {
@@ -638,6 +791,12 @@ export function registerActions(context: vscode.ExtensionContext): void {
       }),
     );
   }
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('commitGraph.worktrees', () =>
+      worktreesCommand().catch((e) => vscode.window.showErrorMessage(errorText(e))),
+    ),
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand('commitGraph.fetch', async () => {

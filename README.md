@@ -21,6 +21,7 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - **Stashes**: each stash shows as a row just above the commit it was made on, with a hollow square and a muted `stash@{n}` label; click for its message and files (untracked too), right-click to apply, pop or drop. Stashes on commits hidden by scope or not loaded yet stay hidden until their base is shown
 - **Stash changes**: right-click the uncommitted-changes row (or the view's ⋯ menu) → Stash Changes…: tracked only, including untracked, or staged only (git 2.35+), with an optional message
 - **Undo** (Ctrl+Z or the ↶ title button): undoes the last commit, amend, merge, rebase, pull, cherry-pick, revert, reset or checkout from the reflog, after a confirm saying where the branch goes back to. Uses `reset --keep`, so uncommitted changes are kept (it refuses if they'd be overwritten); warns before dropping commits already pushed
+- **Worktrees**: a branch checked out in another worktree gets a worktree icon (hover for its folder); a detached worktree shows a muted label on its commit. Right-click a branch → Create Worktree… (defaults to a `<repo>-<branch>` folder next to the repo; remote branches get a local tracking branch), then open it in a new window or add it to the workspace. Right-click a branch in another worktree → Open Worktree or Remove Worktree… (asks again before deleting uncommitted changes). Switching to such a branch offers to open its worktree instead. **Commit Graph: Worktrees…** (view title `…` menu or Command Palette) lists them to open, add, remove or prune
 - **Search** (Ctrl+F): message, author, email or SHA, across all history; non-matches dim in place; Enter / Shift+Enter or F3 step through matches. Terms combine (all must match): `author:ada` or `author:"Ada L"`, `message:fix`, `file:src/git.ts` or `file:*.css`, `after:2026-01-01` / `before:2026-06-01` / `after:2w`, `type:merge` / `type:nonmerge`, `#abc123` or `sha:abc123`
 - **Scrollbar markers**: like the editor's overview ruler: HEAD, selection, branch tips, uncommitted changes, unpushed ↑ / unpulled ↓ commits, search matches and the highlighted branch line, drawn under the scrollbar
 - **Scope**: all branches, or the current branch only
@@ -46,6 +47,7 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - `src/lanes.ts`: lane layout algorithm (pure, unit tested)
 - `src/search.ts`: search query parser (pure, unit tested)
 - `src/undo.ts`: reflog-based undo: classifies the last action (pure, unit tested) and plans how to reverse it
+- `src/worktrees.ts`: `git worktree list` parser and worktree path helpers
 - `src/controller.ts`: drives one graph webview: paging, live refresh, search, details, diffs
 - `src/hosts.ts`: editor tab and panel/sidebar view hosts
 - `src/repos.ts`: picks which repository to show

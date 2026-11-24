@@ -26,6 +26,7 @@ import {
 import { GraphLayout, GraphRow } from './lanes';
 import { revisionUri } from './content';
 import { SEARCH_HELP, parseQuery } from './search';
+import { getWorktrees, samePath } from './worktrees';
 
 const PAGE = 500;
 /** Hash used for the uncommitted-changes row. */
@@ -199,6 +200,8 @@ export class GraphController {
     // Dropping an older stash only rewrites the stash reflog, not refs/stash.
     w(dirs.commonDir, 'logs/refs/stash', reload);
     w(dirs.gitDir, 'index', wip);
+    // Branch switches in other worktrees move their label icons.
+    w(dirs.commonDir, 'worktrees/*/HEAD', reload);
     const inRepo = (uri: vscode.Uri) => uri.scheme === 'file' && uri.fsPath.startsWith(repo + path.sep);
     bag.push(
       vscode.workspace.onDidSaveTextDocument((d) => inRepo(d.uri) && wip()),
@@ -303,6 +306,10 @@ export class GraphController {
     // Sync markers are a nicety: never let them break loading the graph.
     this._sync = await getSync(this.repo).catch(() => null);
     this.stashes = await getStashes(this.repo).catch(() => []);
+    const worktrees = (await getWorktrees(this.repo).catch(() => [])).map((w) => ({
+      ...w,
+      current: samePath(w.path, this.repo),
+    }));
     this.commits = await getLog(this.repo, this.scope, 0, count);
     this.done = this.commits.length < count;
     this.layout = new GraphLayout();
@@ -316,6 +323,7 @@ export class GraphController {
       head: this.head,
       scope: this.scope,
       sync: this._sync,
+      worktrees,
     });
     if (this.lastQuery) await this.runSearch(this.lastQuery);
   }
