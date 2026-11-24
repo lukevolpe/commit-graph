@@ -4,6 +4,7 @@ import { GraphController, WIP, errorText } from './controller';
 import { revisionUri } from './content';
 import * as path from 'node:path';
 import { dropChoices } from './drop';
+import { Remote, defaultBranch, getRemotes, isNonFastForward, pruneRemote, pullRequestUrl, splitRemoteRef } from './remotes';
 
 /** What VS Code passes from `data-vscode-context` on right-click. */
 interface Ctx {
@@ -263,11 +264,13 @@ const handlers: Record<string, Handler> = {
         `${s.current.upstream} has ${s.current.behind} ${s.current.behind === 1 ? 'commit' : 'commits'} you don't have.`,
         { modal: true, detail: 'Pull them first; a plain push would be rejected.' },
         pull,
+        ...(s.current.ahead ? [FORCE_PUSH] : []),
       );
       if (pick === pull) await handlers.pull(repo, {}, p);
+      if (pick === FORCE_PUSH) return run(p, `Force push to ${s.current.upstream}`, ['push', '--force-with-lease']);
       return;
     }
-    return run(p, `Push to ${s.current.upstream}`, ['push']);
+    return pushOrForce(p, `Push to ${s.current.upstream}`, ['push']);
   },
 
   highlightRef: async (_r, { refName }, p) => p.post({ type: 'highlight', ref: refName }),
@@ -298,7 +301,222 @@ const handlers: Record<string, Handler> = {
       await run(p, `Delete tag ${refName}`, ['tag', '-d', refName!]);
     }
   },
+
+  createPullRequest: async (repo, { refName, refKind }, p) => {
+    const remotes = (await getRemotes(repo)).map((r) => r.name);
+    let remote: string;
+    let branch: string;
+    if (refKind === 'remote') {
+      const split = splitRemoteRef(refName!, remotes);
+      if (!split) return vscode.window.showWarningMessage(`Can't tell which remote ${refName} is on.`);
+      ({ remote, branch } = split);
+    } else {
+      const isCurrent = refName === p.sync?.branch;
+      const t = p.sync?.tracking[refName!];
+      const up = t && !t.gone ? splitRemoteRef(t.upstream, remotes) : null;
+      if (!t || !up) {
+        const to = p.sync?.remote;
+        if (!to) return vscode.window.showWarningMessage('This repository has no remote to publish to.');
+        if (!(await confirm(`${refName} isn't on ${to} yet.`, 'Publish it to open a pull request.', 'Publish'))) return;
+        const ok = isCurrent
+          ? (await handlers.push(repo, {}, p)) === true
+          : await run(p, `Publish ${refName} to ${to}`, ['push', '-u', to, refName!]);
+        if (!ok) return;
+        [remote, branch] = [to, refName!];
+      } else {
+        [remote, branch] = [up.remote, up.branch];
+        if (t.ahead) {
+          const push = 'Push';
+          const skip = 'Open Without Pushing';
+          const pick = await vscode.window.showWarningMessage(
+            `${refName} has ${t.ahead} unpushed ${t.ahead === 1 ? 'commit' : 'commits'}.`,
+            { modal: true, detail: 'Push them so the pull request includes them?' },
+            push,
+            skip,
+          );
+          if (!pick) return;
+          if (pick === push) {
+            const ok = isCurrent
+              ? (await handlers.push(repo, {}, p)) === true
+              : await pushOrForce(p, `Push ${refName}`, ['push', remote, `${refName}:${branch}`]);
+            if (!ok) return;
+          }
+        }
+      }
+    }
+    const url = (await git(repo, ['remote', 'get-url', remote])).trim();
+    const target = (await defaultBranch(repo, remote)) ?? 'main';
+    if (target === branch) {
+      return vscode.window.showInformationMessage(`${branch} is ${remote}'s default branch; pick another branch to compare.`);
+    }
+    const link = pullRequestUrl(url, branch, target);
+    if (!link) {
+      return vscode.window.showWarningMessage(`Can't open a pull request page for ${url}: only GitHub, GitLab and Bitbucket are known.`);
+    }
+    await vscode.env.openExternal(vscode.Uri.parse(link));
+  },
+
+  pushTag: async (repo, { refName }, p) => {
+    const remote = await pickRemote(repo, `Push tag ${refName} to`);
+    if (remote) await run(p, `Push tag ${refName} to ${remote}`, ['push', remote, `refs/tags/${refName}`]);
+  },
+
+  deleteRemoteTag: async (repo, { refName }, p) => {
+    const remote = await pickRemote(repo, `Delete tag ${refName} from`);
+    if (!remote) return;
+    if (!(await confirm(`Delete tag ${refName} on ${remote}?`, 'Your local tag is kept.', 'Delete'))) return;
+    await run(p, `Delete tag ${refName} on ${remote}`, ['push', remote, '--delete', `refs/tags/${refName}`]);
+  },
+
+  deleteRemoteBranch: async (repo, { refName }, p) => {
+    const split = splitRemoteRef(refName!, (await getRemotes(repo)).map((r) => r.name));
+    if (!split) return vscode.window.showWarningMessage(`Can't tell which remote ${refName} is on.`);
+    const ok = await confirm(
+      `Delete ${split.branch} on ${split.remote}?`,
+      'The branch is deleted on the remote for everyone. Local branches are kept.',
+      'Delete',
+    );
+    if (ok) await run(p, `Delete ${refName}`, ['push', split.remote, '--delete', split.branch]);
+  },
+
+  fetchRemote: async (repo, { refName }, p) => {
+    const split = splitRemoteRef(refName!, (await getRemotes(repo)).map((r) => r.name));
+    if (!split) return vscode.window.showWarningMessage(`Can't tell which remote ${refName} is on.`);
+    await run(p, `Fetch ${split.remote}`, ['fetch', '--prune', split.remote]);
+  },
+
+  manageRemotes: async (repo, _ctx, p) => {
+    const remotes = await getRemotes(repo);
+    const items: (vscode.QuickPickItem & { remote?: Remote })[] = [
+      ...remotes.map((r) => ({ label: r.name, description: r.url, remote: r })),
+      { label: '$(add) Add Remote…' },
+    ];
+    const pick = await vscode.window.showQuickPick(items, {
+      title: 'Remotes',
+      placeHolder: remotes.length ? 'Pick a remote to manage, or add one' : 'No remotes yet',
+    });
+    if (!pick) return;
+    if (!pick.remote) return addRemote(repo, remotes, p);
+    const r = pick.remote;
+    const action = await vscode.window.showQuickPick(
+      [
+        { label: '$(cloud-download) Fetch', id: 'fetch' },
+        { label: '$(clear-all) Prune', description: 'Delete tracking branches gone from the remote', id: 'prune' },
+        { label: '$(edit) Rename…', id: 'rename' },
+        { label: '$(trash) Remove…', id: 'remove' },
+      ],
+      { title: `${r.name}  ${r.url}` },
+    );
+    if (action?.id === 'fetch') await run(p, `Fetch ${r.name}`, ['fetch', '--prune', r.name]);
+    if (action?.id === 'prune') {
+      try {
+        const pruned = await p.withBusy(`Prune ${r.name}`, () => pruneRemote(repo, r.name));
+        void vscode.window.showInformationMessage(
+          pruned.length
+            ? `Pruned ${pruned.length} stale ${pruned.length === 1 ? 'branch' : 'branches'}: ${pruned.join(', ')}`
+            : `Nothing to prune on ${r.name}.`,
+        );
+      } catch (e) {
+        void vscode.window.showErrorMessage(`Prune ${r.name} failed: ${errorText(e)}`);
+      } finally {
+        p.refresh();
+      }
+    }
+    if (action?.id === 'rename') {
+      const name = await vscode.window.showInputBox({
+        title: `Rename remote ${r.name}`,
+        value: r.name,
+        validateInput: (v) => validRemoteName(repo, remotes, v.trim(), r.name),
+      });
+      if (name?.trim() && name.trim() !== r.name) {
+        await run(p, `Rename remote ${r.name}`, ['remote', 'rename', r.name, name.trim()]);
+      }
+    }
+    if (action?.id === 'remove') {
+      const ok = await confirm(
+        `Remove remote ${r.name}?`,
+        'Its remote-tracking branches go too. Nothing on the remote itself changes, and local branches are kept.',
+        'Remove',
+      );
+      if (ok) await run(p, `Remove remote ${r.name}`, ['remote', 'remove', r.name]);
+    }
+  },
 };
+
+const FORCE_PUSH = 'Force Push (with lease)';
+
+/** Pushes; if the remote has commits we don't, offers a force push with lease instead of just failing. */
+async function pushOrForce(p: GraphController, label: string, args: string[]): Promise<boolean> {
+  try {
+    await p.withBusy(label, () =>
+      vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: label }, () => git(p.repo, args)),
+    );
+    p.refresh();
+    return true;
+  } catch (e) {
+    const msg = errorText(e);
+    if (!isNonFastForward(msg)) {
+      void vscode.window.showErrorMessage(`${label} failed: ${msg}`);
+      p.refresh();
+      return false;
+    }
+    const pick = await vscode.window.showWarningMessage(
+      `${label} was rejected: the remote has commits you don't.`,
+      {
+        modal: true,
+        detail:
+          'Pull to combine them, or force push to replace them with yours. With lease, the push is refused if the remote changed since you last fetched.',
+      },
+      FORCE_PUSH,
+    );
+    if (pick !== FORCE_PUSH) return false;
+    return run(p, `Force ${label.charAt(0).toLowerCase()}${label.slice(1)}`, [args[0], '--force-with-lease', ...args.slice(1)]);
+  }
+}
+
+/** The only remote, or one the user picks (origin first). */
+async function pickRemote(repo: string, title: string): Promise<string | undefined> {
+  const names = (await getRemotes(repo)).map((r) => r.name);
+  if (!names.length) {
+    void vscode.window.showWarningMessage('This repository has no remote.');
+    return undefined;
+  }
+  if (names.length === 1) return names[0];
+  names.sort((a, b) => Number(b === 'origin') - Number(a === 'origin'));
+  return vscode.window.showQuickPick(names, { title });
+}
+
+async function validRemoteName(repo: string, remotes: Remote[], name: string, current?: string): Promise<string | null> {
+  if (!name) return null;
+  if (name !== current && remotes.some((r) => r.name === name)) return `${name} already exists`;
+  try {
+    await git(repo, ['check-ref-format', `refs/remotes/${name}/x`]);
+    return null;
+  } catch {
+    return 'Not a valid name';
+  }
+}
+
+async function addRemote(repo: string, remotes: Remote[], p: GraphController): Promise<unknown> {
+  const name = await vscode.window.showInputBox({
+    title: 'Add remote',
+    prompt: 'Name',
+    value: remotes.length ? '' : 'origin',
+    placeHolder: 'upstream',
+    validateInput: (v) => validRemoteName(repo, remotes, v.trim()),
+  });
+  if (!name?.trim()) return;
+  const url = await vscode.window.showInputBox({
+    title: `Add remote ${name.trim()}`,
+    prompt: 'URL',
+    placeHolder: 'https://github.com/owner/repo.git',
+    validateInput: (v) => (v.trim() ? null : 'Enter a URL'),
+  });
+  if (!url?.trim()) return;
+  if (await run(p, `Add remote ${name.trim()}`, ['remote', 'add', name.trim(), url.trim()])) {
+    await run(p, `Fetch ${name.trim()}`, ['fetch', name.trim()]);
+  }
+}
 
 /** Applies, pops or drops a stash. Its `stash@{n}` is looked up by hash right before running, as indexes shift. */
 async function stashAction(repo: string, { sha, stashRef }: Ctx, p: GraphController, op: 'apply' | 'pop' | 'drop') {
