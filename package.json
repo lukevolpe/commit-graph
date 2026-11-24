@@ -266,6 +266,37 @@
         "command": "commitGraph.revealLineCommit",
         "title": "Reveal Commit in Graph",
         "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.operationContinue",
+        "title": "Continue Merge / Rebase / Cherry-pick / Revert",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.operationSkip",
+        "title": "Skip Commit (Rebase / Cherry-pick / Revert)",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.operationAbort",
+        "title": "Abort Merge / Rebase / Cherry-pick / Revert / Bisect…",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.operationBisectGood",
+        "title": "Bisect: Mark Good",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.operationBisectBad",
+        "title": "Bisect: Mark Bad",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.gitFlow",
+        "title": "Git Flow…",
+        "category": "Commit Graph",
+        "icon": "$(git-branch)"
       }
     ],
     "menus": {
@@ -672,6 +703,11 @@
           "command": "commitGraph.worktrees",
           "when": "view == commitGraph.view",
           "group": "worktrees@1"
+        },
+        {
+          "command": "commitGraph.gitFlow",
+          "when": "view == commitGraph.view",
+          "group": "2_flow@1"
         }
       ],
       "explorer/context": [

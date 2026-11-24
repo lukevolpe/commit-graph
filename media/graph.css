@@ -666,3 +666,42 @@ button.file {
 /* The file whose history is shown, in a commit's file list. */
 .d-files li.history-file { background: var(--vscode-list-inactiveSelectionBackground); }
 .d-files li.history-file .fname { font-weight: 600; }
+
+/* ---- operation in progress banner ------------------------------------------- */
+
+.op-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 4px 8px 4px 10px;
+  flex-shrink: 0;
+  color: var(--vscode-inputValidation-warningForeground, var(--vscode-foreground));
+  background: var(--vscode-inputValidation-warningBackground, transparent);
+  border-bottom: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-editorWarning-foreground));
+}
+.op-banner[hidden] { display: none; }
+.op-icon { color: var(--vscode-editorWarning-foreground); }
+.op-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.op-text b { font-weight: 600; }
+.op-subject { color: var(--muted); }
+.op-conflicts { color: var(--vscode-editorWarning-foreground); font-weight: 600; }
+.op-btn {
+  padding: 1px 8px;
+  border-radius: 2px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  background: var(--vscode-button-secondaryBackground, var(--vscode-toolbar-hoverBackground));
+}
+.op-btn:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-toolbar-hoverBackground)); }
+.op-btn.primary { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
+.op-btn.primary:hover { background: var(--vscode-button-hoverBackground, var(--vscode-button-background)); }
+.op-files { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 2px 12px; padding-left: 22px; }
+.op-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--vscode-gitDecoration-conflictingResourceForeground, var(--vscode-editorWarning-foreground));
+}
+.op-file:hover { text-decoration: underline; }
+.op-file .codicon { font-size: 12px; }
