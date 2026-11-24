@@ -74,3 +74,25 @@ test('a first parent is always reached on its child\'s lane (lane highlight walk
     assert.ok(rows[at.get(p)!].lines.some((l) => l.kind === 'in' && l.lane === lane), `${p} entered from lane ${lane}`);
   });
 });
+
+const side = (hash: string, parent: string): LayoutCommit => ({ hash, parents: [parent], side: true });
+
+test('stash on a branch tip gets a side lane; the tip keeps lane 0', () => {
+  const rows = new GraphLayout().add([side('S', 'H'), c('H', 'A'), c('A')]);
+  assert.deepEqual(rows.map((r) => r.col), [1, 0, 0]);
+  assert.deepEqual(rows[0].lines, [{ kind: 'out', lane: 1, color: 0 }]);
+  assert.deepEqual(rows[1].lines.filter((l) => l.kind === 'in').map((l) => l.lane), [1]);
+  // Side lane is closed after joining.
+  assert.deepEqual(rows[2].lines.map((l) => l.kind), ['in']);
+});
+
+test('stash under the uncommitted row, and two stashes on one base', () => {
+  assert.deepEqual(cols([c('WIP', 'H'), side('S', 'H'), c('H', 'A'), c('A')]), [0, 1, 0, 0]);
+  assert.deepEqual(cols([side('S0', 'H'), side('S1', 'H'), c('H', 'A'), c('A')]), [1, 2, 0, 0]);
+});
+
+test('stash on an older commit joins it without pulling its line sideways', () => {
+  // Lane 1 waits for B (side branch F); the stash on B gets lane 2 and B stays in lane 1.
+  const rows = new GraphLayout().add([c('M', 'A', 'F'), c('F', 'B'), side('S', 'B'), c('B', 'A'), c('A')]);
+  assert.deepEqual(rows.map((r) => r.col), [0, 1, 2, 1, 0]);
+});

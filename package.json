@@ -167,6 +167,21 @@
         "command": "commitGraph.clearHighlight",
         "title": "Clear Highlight",
         "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.applyStash",
+        "title": "Apply Stash",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.popStash",
+        "title": "Pop Stash",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.dropStash",
+        "title": "Drop Stash…",
+        "category": "Commit Graph"
       }
     ],
     "menus": {
@@ -268,6 +283,18 @@
         },
         {
           "command": "commitGraph.clearHighlight",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.applyStash",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.popStash",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.dropStash",
           "when": "false"
         }
       ],
@@ -391,6 +418,26 @@
           "command": "commitGraph.highlightRef",
           "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && !highlighted",
           "group": "4_compare@3"
+        },
+        {
+          "command": "commitGraph.applyStash",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'stash'",
+          "group": "1_stash@1"
+        },
+        {
+          "command": "commitGraph.popStash",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'stash'",
+          "group": "1_stash@2"
+        },
+        {
+          "command": "commitGraph.dropStash",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'stash'",
+          "group": "1_stash@3"
+        },
+        {
+          "command": "commitGraph.copySha",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'stash'",
+          "group": "5_copy@1"
         }
       ],
       "view/title": [

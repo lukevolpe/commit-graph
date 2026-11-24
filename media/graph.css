@@ -302,6 +302,7 @@ button.icon:hover { background: var(--vscode-toolbar-hoverBackground); }
 
 .row.head .subject { font-weight: 600; }
 .row.wip-row .subject { font-style: italic; color: var(--muted); }
+.row.stash-row .subject { color: var(--muted); }
 
 .col-author, .col-date, .col-sha { color: var(--muted); }
 .col-author { display: flex; align-items: center; gap: 6px; }
@@ -327,6 +328,7 @@ mark {
 .n.merge { fill: var(--lane); }
 .n.ring { fill: none; stroke: var(--lane); stroke-width: 2; }
 .n.wip { fill: var(--bg); stroke: var(--lane); stroke-width: 1.5; stroke-dasharray: 2 2; }
+.n.stash { fill: var(--bg); stroke: var(--lane); stroke-width: 1.5; }
 
 /* Lane highlight: the focused line stays bold, everything else steps back. */
 .focusing .l, .focusing .n { transition: opacity .12s; }
@@ -364,6 +366,21 @@ mark {
 .ref.head { box-shadow: inset 0 0 0 1px var(--vscode-charts-red); background: transparent; }
 .ref.head .codicon { color: var(--vscode-charts-red); }
 .ref.more { box-shadow: none; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); padding: 0 6px; }
+
+/* Stash label: quieter than branch labels. */
+.stash-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0 6px 0 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+  color: var(--muted);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--muted) 40%, transparent);
+  vertical-align: middle;
+}
+.stash-ref .codicon { font-size: 12px; }
 
 /* ---- avatars --------------------------------------------------------------- */
 

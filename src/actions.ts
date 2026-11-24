@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { commitWebUrl, getChanges, getDetails, git } from './git';
+import { commitWebUrl, getChanges, getDetails, git, stashSelector } from './git';
 import { GraphController, WIP, errorText } from './controller';
 import { revisionUri } from './content';
 import * as path from 'node:path';
@@ -9,6 +9,8 @@ interface Ctx {
   sha?: string;
   refName?: string;
   refKind?: 'branch' | 'remote' | 'tag' | 'head';
+  /** `stash@{n}` when the row was drawn; only a label, since indexes shift. */
+  stashRef?: string;
 }
 
 type Handler = (repo: string, ctx: Ctx, panel: GraphController) => Promise<unknown>;
@@ -269,12 +271,31 @@ const handlers: Record<string, Handler> = {
   highlightLane: async (_r, { sha }, p) => p.post({ type: 'highlight', sha }),
   clearHighlight: async (_r, _ctx, p) => p.post({ type: 'highlight' }),
 
+  applyStash: async (repo, ctx, p) => stashAction(repo, ctx, p, 'apply'),
+  popStash: async (repo, ctx, p) => stashAction(repo, ctx, p, 'pop'),
+  dropStash: async (repo, ctx, p) => stashAction(repo, ctx, p, 'drop'),
+
   deleteTag: async (repo, { refName }, p) => {
     if (await confirm(`Delete tag ${refName}?`, 'Only the local tag is deleted.', 'Delete')) {
       await run(p, `Delete tag ${refName}`, ['tag', '-d', refName!]);
     }
   },
 };
+
+/** Applies, pops or drops a stash. Its `stash@{n}` is looked up by hash right before running, as indexes shift. */
+async function stashAction(repo: string, { sha, stashRef }: Ctx, p: GraphController, op: 'apply' | 'pop' | 'drop') {
+  if (op === 'drop') {
+    const label = stashRef ?? `stash ${short(sha!)}`;
+    if (!(await confirm(`Drop ${label}?`, 'Its changes are deleted for good.', 'Drop'))) return;
+  }
+  const ref = await stashSelector(repo, sha!);
+  if (!ref) {
+    p.refresh();
+    return vscode.window.showWarningMessage('That stash no longer exists.');
+  }
+  const verb = { apply: 'Apply', pop: 'Pop', drop: 'Drop' }[op];
+  return run(p, `${verb} ${ref}`, ['stash', op, ref]);
+}
 
 /** True if any of the git config keys is set. */
 async function configured(repo: string, ...keys: string[]): Promise<boolean> {

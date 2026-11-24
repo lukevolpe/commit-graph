@@ -28,12 +28,19 @@ export interface GraphRow {
 export interface LayoutCommit {
   hash: string;
   parents: string[];
+  /**
+   * Side row (a stash): always gets its own short lane that joins its parent, and never
+   * pulls the parent's line into that lane.
+   */
+  side?: boolean;
 }
 
 /** Stateful so pages of commits can be added as the user scrolls. */
 export class GraphLayout {
   private lanes: (string | null)[] = [];
   private colors: number[] = [];
+  /** Lane was opened by a side row. */
+  private side: boolean[] = [];
   private nextColor = 0;
 
   add(commits: LayoutCommit[]): GraphRow[] {
@@ -56,8 +63,12 @@ export class GraphLayout {
     });
 
     let col: number;
-    if (incoming.length) {
-      col = incoming[0];
+    const main = incoming.filter((i) => !this.side[i]);
+    if (c.side) {
+      col = this.sideSlot(c.parents[0]);
+      this.colors[col] = this.newColor();
+    } else if (main.length) {
+      col = main[0];
     } else {
       // Branch tip: nothing above points here.
       col = this.freeSlot();
@@ -67,13 +78,17 @@ export class GraphLayout {
 
     for (const i of incoming) {
       lines.push({ kind: 'in', lane: i, color: this.colors[i] });
-      if (i !== col) this.lanes[i] = null; // merged into this node
+      if (i !== col) {
+        this.lanes[i] = null; // merged into this node
+        this.side[i] = false;
+      }
     }
 
     const [first, ...rest] = c.parents;
 
     // First parent continues this lane, keeping the main line straight.
     this.lanes[col] = first ?? null;
+    this.side[col] = !!c.side;
     if (first) lines.push({ kind: 'out', lane: col, color });
 
     // Extra parents (merge): join a lane already waiting, or open a new one.
@@ -83,6 +98,7 @@ export class GraphLayout {
         k = this.freeSlot();
         this.lanes[k] = p;
         this.colors[k] = this.newColor();
+        this.side[k] = false;
       }
       lines.push({ kind: 'out', lane: k, color: this.colors[k] });
     }
@@ -96,7 +112,22 @@ export class GraphLayout {
     if (i !== -1) return i;
     this.lanes.push(null);
     this.colors.push(0);
+    this.side.push(false);
     return this.lanes.length - 1;
+  }
+
+  /**
+   * Lane for a side row. If nothing on a main line waits for its parent yet, the parent
+   * will be a tip taking the lowest free slot, so leave that one for it.
+   */
+  private sideSlot(parent: string | undefined): number {
+    const waited = this.lanes.some((h, i) => h === parent && !this.side[i]);
+    if (waited || !parent) return this.freeSlot();
+    const first = this.freeSlot();
+    this.lanes[first] = ''; // hold it while finding the next one
+    const col = this.freeSlot();
+    this.lanes[first] = null;
+    return col;
   }
 
   private newColor(): number {
@@ -107,6 +138,7 @@ export class GraphLayout {
     while (this.lanes.length && this.lanes[this.lanes.length - 1] === null) {
       this.lanes.pop();
       this.colors.pop();
+      this.side.pop();
     }
   }
 }

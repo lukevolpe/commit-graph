@@ -6,14 +6,18 @@ import {
   FileChange,
   Scope,
   SearchEntry,
+  Stash,
   SyncState,
   getDetails,
   getHead,
   getLog,
   getSearchIndex,
+  getStashDetails,
+  getStashes,
   getSync,
   getWorkingChanges,
   gitDirs,
+  insertStashes,
   search,
 } from './git';
 import { GraphLayout, GraphRow } from './lanes';
@@ -40,7 +44,7 @@ type InMessage =
   | { type: 'copy'; text: string; label: string }
   | { type: 'layout'; width: number; height: number };
 
-type Row = Commit & { graph: GraphRow; wip?: boolean };
+type Row = Commit & { graph: GraphRow; wip?: boolean; stash?: string };
 
 /** Where the graph lives: an editor tab or a panel/sidebar view. */
 export interface GraphHost {
@@ -66,6 +70,8 @@ export class GraphController {
   private head: string | null = null;
   private wipCount = 0;
   private _sync: SyncState | null = null;
+  /** Shown above their base commit once it's loaded; not part of `commits` (which drives paging). */
+  private stashes: Stash[] = [];
   private done = false;
   private scope: Scope;
   private searchIndex: Promise<SearchEntry[]> | undefined;
@@ -177,6 +183,8 @@ export class GraphController {
     const wip = () => this.refreshWip();
     w(dirs.gitDir, '{HEAD,MERGE_HEAD,REBASE_HEAD,CHERRY_PICK_HEAD,REVERT_HEAD}', reload);
     w(dirs.commonDir, '{packed-refs,refs/**}', reload);
+    // Dropping an older stash only rewrites the stash reflog, not refs/stash.
+    w(dirs.commonDir, 'logs/refs/stash', reload);
     w(dirs.gitDir, 'index', wip);
     const inRepo = (uri: vscode.Uri) => uri.scheme === 'file' && uri.fsPath.startsWith(repo + path.sep);
     bag.push(
@@ -257,6 +265,7 @@ export class GraphController {
     this.wipCount = this.head ? (await getWorkingChanges(this.repo)).length : 0;
     // Sync markers are a nicety: never let them break loading the graph.
     this._sync = await getSync(this.repo).catch(() => null);
+    this.stashes = await getStashes(this.repo).catch(() => []);
     this.commits = await getLog(this.repo, this.scope, 0, count);
     this.done = this.commits.length < count;
     this.layout = new GraphLayout();
@@ -293,9 +302,9 @@ export class GraphController {
 
   /** Lays out a batch of commits; the first batch gets the uncommitted row on top. */
   private toRows(commits: Commit[], first: boolean): Row[] {
-    const batch: (Commit & { wip?: boolean })[] = [...commits];
+    const batch: (Commit & { wip?: boolean; stash?: string })[] = insertStashes(commits, this.stashes);
     if (first && this.wipCount && this.head) batch.unshift(this.wipCommit());
-    const graph = this.layout.add(batch);
+    const graph = this.layout.add(batch.map((c) => (c.stash ? { ...c, side: true } : c)));
     return batch.map((c, i) => ({ ...c, graph: graph[i] }));
   }
 
@@ -330,7 +339,9 @@ export class GraphController {
       const details =
         hash === WIP
           ? { hash: WIP, wip: true, parents: this.head ? [this.head] : [], files: await getWorkingChanges(this.repo) }
-          : await getDetails(this.repo, hash);
+          : this.stashes.some((s) => s.hash === hash)
+            ? await getStashDetails(this.repo, hash)
+            : await getDetails(this.repo, hash);
       if (seq === this.detailsSeq) this.post({ type: 'details', details });
     } catch (e) {
       if (seq === this.detailsSeq) this.post({ type: 'details', hash, error: errorText(e) });
@@ -344,6 +355,7 @@ export class GraphController {
     let right: vscode.Uri;
     if (f.status === 'D') right = empty(f.path);
     else if (hash === WIP) right = vscode.Uri.file(path.join(this.repo, f.path));
+    else if (f.untracked) right = revisionUri(this.repo, f.path, `${hash}^3`); // stash's untracked files
     else right = revisionUri(this.repo, f.path, hash);
     return [left, right];
   }
