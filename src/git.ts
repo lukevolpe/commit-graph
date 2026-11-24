@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import { join as joinPath } from 'node:path';
 import { ParsedQuery, filePathspecs, isEmptyQuery, parseQuery } from './search';
 
 export type RefKind = 'head' | 'branch' | 'remote' | 'tag';
@@ -498,4 +500,111 @@ export async function getStashDetails(cwd: string, hash: string): Promise<Commit
     ? (await getChanges(cwd, EMPTY_TREE, untrackedCommit)).map((f) => ({ ...f, untracked: true }))
     : [];
   return { ...d, parents: d.parents.slice(0, 1), files: [...d.files, ...untracked] };
+}
+
+// ---- operation in progress (merge, rebase, cherry-pick, revert, bisect) ----------
+
+export type OperationKind = 'merge' | 'rebase' | 'cherry-pick' | 'revert' | 'bisect';
+
+export interface Operation {
+  kind: OperationKind;
+  /** Branch being merged into / rebased / bisected; null when detached. */
+  head: string | null;
+  /** What comes in: merged branch, rebase onto, short SHA being picked or reverted. */
+  incoming?: string | null;
+  /** Subject of the commit being cherry-picked or reverted. */
+  subject?: string;
+  /** Rebase progress: current step and total. */
+  step?: number;
+  total?: number;
+  /** Files with unresolved conflicts, repo-relative. */
+  conflicts: string[];
+}
+
+/** The merge, rebase, cherry-pick, revert or bisect in progress, or null. Read from the git dir. */
+export async function getOperation(cwd: string): Promise<Operation | null> {
+  const { gitDir } = await gitDirs(cwd);
+  const read = (f: string) => readFile(joinPath(gitDir, f), 'utf8').then((s) => s.trim(), () => null);
+  const num = (s: string | null) => (s && /^\d+$/.test(s) ? Number(s) : undefined);
+  const branchName = (ref: string | null) => (ref && ref.startsWith('refs/heads/') ? ref.slice(11) : null);
+  const current = async () => {
+    try {
+      return (await git(cwd, ['symbolic-ref', '--short', '-q', 'HEAD'])).trim() || null;
+    } catch {
+      return null;
+    }
+  };
+  const conflicts = async () =>
+    (await git(cwd, ['diff', '--name-only', '-z', '--diff-filter=U'])).split('\0').filter(Boolean);
+  const commit = async (sha: string) => ({
+    incoming: sha.slice(0, 7),
+    subject: (await git(cwd, ['log', '-1', '--format=%s', sha, '--']).catch(() => '')).trim(),
+  });
+
+  for (const d of ['rebase-merge', 'rebase-apply']) {
+    const headName = await read(`${d}/head-name`);
+    if (headName === null) continue;
+    if ((await read(`${d}/applying`)) !== null) break; // `git am`, not a rebase
+    const merge = d === 'rebase-merge';
+    const onto = await read(`${d}/onto`);
+    return {
+      kind: 'rebase',
+      head: branchName(headName),
+      incoming: onto ? await refNameFor(cwd, onto) : null,
+      step: num(await read(merge ? `${d}/msgnum` : `${d}/next`)),
+      total: num(await read(merge ? `${d}/end` : `${d}/last`)),
+      conflicts: await conflicts(),
+    };
+  }
+  const mergeHead = await read('MERGE_HEAD');
+  if (mergeHead) {
+    const msg = (await read('MERGE_MSG')) ?? '';
+    const m = msg.match(/^Merge (?:remote-tracking )?(?:branch|tag|commit) '([^']+)'/);
+    return {
+      kind: 'merge',
+      head: await current(),
+      incoming: m ? m[1] : mergeHead.split('\n')[0].slice(0, 7),
+      conflicts: await conflicts(),
+    };
+  }
+  for (const [file, kind] of [['CHERRY_PICK_HEAD', 'cherry-pick'], ['REVERT_HEAD', 'revert']] as const) {
+    const sha = await read(file);
+    if (sha) return { kind, head: await current(), ...(await commit(sha)), conflicts: await conflicts() };
+  }
+  if ((await read('BISECT_LOG')) !== null) {
+    const start = await read('BISECT_START');
+    return { kind: 'bisect', head: start && !/^[0-9a-f]{40}$/.test(start) ? start : null, conflicts: [] };
+  }
+  return null;
+}
+
+/** A branch name pointing at `sha` (local first), else its short SHA. */
+async function refNameFor(cwd: string, sha: string): Promise<string> {
+  try {
+    const out = await git(cwd, ['for-each-ref', '--points-at', sha, '--format=%(refname:short)', 'refs/heads', 'refs/remotes']);
+    const name = out.split('\n').find((n) => n && !n.endsWith('/HEAD'));
+    if (name) return name;
+  } catch {
+    // fall through
+  }
+  return sha.slice(0, 7);
+}
+
+/** Runs git with no editor, so `--continue` and merges never wait on one. */
+export function gitNoEditor(cwd: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      'git',
+      ['-c', 'core.editor=true', ...args],
+      {
+        cwd,
+        maxBuffer: 64 * 1024 * 1024,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C', GIT_EDITOR: 'true', GIT_SEQUENCE_EDITOR: 'true' },
+      },
+      (err, stdout, stderr) => {
+        if (err) reject(new Error(stderr.trim() || stdout.trim() || err.message));
+        else resolve(stdout);
+      },
+    );
+  });
 }

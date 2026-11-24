@@ -22,6 +22,8 @@ import {
   gitDirs,
   insertStashes,
   search,
+  Operation,
+  getOperation,
 } from './git';
 import { GraphLayout, GraphRow } from './lanes';
 import { revisionUri } from './content';
@@ -50,7 +52,8 @@ type InMessage =
   | { type: 'push' }
   | { type: 'copy'; text: string; label: string }
   | { type: 'pickRef' }
-  | { type: 'layout'; width: number; height: number };
+  | { type: 'layout'; width: number; height: number }
+  | { type: 'operation'; action: 'Continue' | 'Skip' | 'Abort' | 'BisectGood' | 'BisectBad' };
 
 type Row = Commit & { graph: GraphRow; wip?: boolean; stash?: string };
 
@@ -95,6 +98,9 @@ export class GraphController {
   private repoDisposables: vscode.Disposable[] = [];
   private reloadTimer: NodeJS.Timeout | undefined;
   private wipTimer: NodeJS.Timeout | undefined;
+  /** Merge/rebase/etc. in progress, as of the last check. */
+  private _operation: Operation | null = null;
+  private opTimer: NodeJS.Timeout | undefined;
 
   constructor(
     readonly host: GraphHost,
@@ -197,6 +203,9 @@ export class GraphController {
     // Dropping an older stash only rewrites the stash reflog, not refs/stash.
     w(dirs.commonDir, 'logs/refs/stash', reload);
     w(dirs.gitDir, 'index', wip);
+    // Operation banner: rebase steps, bisect, and conflicts being resolved (index writes).
+    w(dirs.gitDir, '{rebase-merge,rebase-apply,rebase-merge/**,rebase-apply/**,BISECT_LOG}', reload);
+    w(dirs.gitDir, 'index', () => this.refreshOperation());
     const inRepo = (uri: vscode.Uri) => uri.scheme === 'file' && uri.fsPath.startsWith(repo + path.sep);
     bag.push(
       vscode.workspace.onDidSaveTextDocument((d) => inRepo(d.uri) && wip()),
@@ -204,6 +213,21 @@ export class GraphController {
       vscode.workspace.onDidDeleteFiles((e) => e.files.some(inRepo) && wip()),
       vscode.workspace.onDidRenameFiles((e) => e.files.some((f) => inRepo(f.newUri)) && wip()),
       vscode.window.onDidChangeWindowState((s) => s.focused && wip()),
+    );
+  }
+
+  /** Re-reads the operation in progress; posts it only when it changed. */
+  refreshOperation(): void {
+    clearTimeout(this.opTimer);
+    this.opTimer = setTimeout(
+      () =>
+        this.enqueue(async () => {
+          const op = await getOperation(this.repo).catch(() => null);
+          if (JSON.stringify(op) === JSON.stringify(this._operation)) return;
+          this._operation = op;
+          this.post({ type: 'operation', operation: op });
+        }),
+      300,
     );
   }
 
@@ -268,6 +292,9 @@ export class GraphController {
         void vscode.env.clipboard.writeText(msg.text);
         void vscode.window.setStatusBarMessage(`$(check) Copied ${msg.label}`, 2000);
         break;
+      case 'operation':
+        void vscode.commands.executeCommand(`commitGraph.operation${msg.action}`);
+        break;
       case 'pickRef':
         void this.pickRef().catch((e) => vscode.window.showErrorMessage(errorText(e)));
         break;
@@ -290,6 +317,7 @@ export class GraphController {
     // Sync markers are a nicety: never let them break loading the graph.
     this._sync = await getSync(this.repo).catch(() => null);
     this.stashes = await getStashes(this.repo).catch(() => []);
+    this._operation = await getOperation(this.repo).catch(() => null);
     this.commits = await getLog(this.repo, this.scope, 0, count);
     this.done = this.commits.length < count;
     this.layout = new GraphLayout();
@@ -303,6 +331,7 @@ export class GraphController {
       head: this.head,
       scope: this.scope,
       sync: this._sync,
+      operation: this._operation,
     });
     if (this.lastQuery) await this.runSearch(this.lastQuery);
   }
@@ -541,6 +570,7 @@ export class GraphController {
     <button class="icon" id="fetch" title="Fetch all remotes" aria-label="Fetch"><i class="codicon codicon-cloud-download"></i></button>
     <button class="icon" id="refresh" title="Refresh" aria-label="Refresh"><i class="codicon codicon-refresh"></i></button>
   </header>
+  <div class="op-banner" id="op-banner" hidden role="status"></div>
   <main class="main">
     <section class="list" id="list">
       <div class="row header">
@@ -569,6 +599,7 @@ export class GraphController {
     if (GraphController.active === this) GraphController.active = [...GraphController.all].at(-1);
     clearTimeout(this.reloadTimer);
     clearTimeout(this.wipTimer);
+    clearTimeout(this.opTimer);
     this.repoDisposables.forEach((d) => d.dispose());
     this.disposables.forEach((d) => d.dispose());
   }

@@ -187,6 +187,37 @@
         "command": "commitGraph.dropStash",
         "title": "Drop Stash…",
         "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.operationContinue",
+        "title": "Continue Merge / Rebase / Cherry-pick / Revert",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.operationSkip",
+        "title": "Skip Commit (Rebase / Cherry-pick / Revert)",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.operationAbort",
+        "title": "Abort Merge / Rebase / Cherry-pick / Revert / Bisect…",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.operationBisectGood",
+        "title": "Bisect: Mark Good",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.operationBisectBad",
+        "title": "Bisect: Mark Bad",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.gitFlow",
+        "title": "Git Flow…",
+        "category": "Commit Graph",
+        "icon": "$(git-branch)"
       }
     ],
     "menus": {
@@ -484,6 +515,11 @@
           "command": "commitGraph.switchRepo",
           "when": "view == commitGraph.view && workspaceFolderCount > 1",
           "group": "navigation@6"
+        },
+        {
+          "command": "commitGraph.gitFlow",
+          "when": "view == commitGraph.view",
+          "group": "2_flow@1"
         }
       ]
     },

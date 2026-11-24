@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import { commitWebUrl, getChanges, getDetails, git, stashSelector } from './git';
+import { Operation, getOperation, gitNoEditor } from './git';
+import { FlowChoice, FlowKind, flowChoices, planFinish, planStart, readFlowConfig, suggestedTag } from './gitflow';
 import { GraphController, WIP, errorText } from './controller';
 import { revisionUri } from './content';
 import * as path from 'node:path';
@@ -23,10 +25,10 @@ async function confirm(message: string, detail: string, action: string): Promise
 }
 
 /** Runs a git command with a spinner; reports failures (including conflicts) to the user. */
-async function run(panel: GraphController, label: string, args: string[]): Promise<boolean> {
+async function run(panel: GraphController, label: string, args: string[], exec = git): Promise<boolean> {
   try {
     await panel.withBusy(label, () =>
-      vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: label }, () => git(panel.repo, args)),
+      vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: label }, () => exec(panel.repo, args)),
     );
     return true;
   } catch (e) {
@@ -281,6 +283,13 @@ const handlers: Record<string, Handler> = {
       await run(p, `Delete tag ${refName}`, ['tag', '-d', refName!]);
     }
   },
+
+  operationContinue: async (repo, _ctx, p) => operationStep(repo, p, 'continue'),
+  operationSkip: async (repo, _ctx, p) => operationStep(repo, p, 'skip'),
+  operationAbort: async (repo, _ctx, p) => operationStep(repo, p, 'abort'),
+  operationBisectGood: async (repo, _ctx, p) => bisectMark(repo, p, 'good'),
+  operationBisectBad: async (repo, _ctx, p) => bisectMark(repo, p, 'bad'),
+  gitFlow: async (repo, _ctx, p) => gitFlow(repo, p),
 };
 
 /** Applies, pops or drops a stash. Its `stash@{n}` is looked up by hash right before running, as indexes shift. */
@@ -308,6 +317,131 @@ async function configured(repo: string, ...keys: string[]): Promise<boolean> {
     }
   }
   return false;
+}
+
+// ---- operation in progress (banner buttons) -------------------------------------
+
+const OP_NAME: Record<Operation['kind'], string> = {
+  merge: 'merge',
+  rebase: 'rebase',
+  'cherry-pick': 'cherry-pick',
+  revert: 'revert',
+  bisect: 'bisect',
+};
+
+/** Continue / skip / abort the merge, rebase, cherry-pick or revert in progress (`git <op> --<step>`). */
+async function operationStep(repo: string, p: GraphController, step: 'continue' | 'skip' | 'abort') {
+  const op = await getOperation(repo);
+  p.refreshOperation();
+  if (!op) return vscode.window.showInformationMessage('No merge, rebase, cherry-pick or revert in progress.');
+  const name = OP_NAME[op.kind];
+  if (op.kind === 'bisect') {
+    if (step !== 'abort') return vscode.window.showInformationMessage('Mark the checked-out commit Good or Bad.');
+    if (!(await confirm('End the bisect?', 'You go back to the branch you started from.', 'End Bisect'))) return;
+    return run(p, 'End bisect', ['bisect', 'reset']);
+  }
+  if (step === 'skip' && op.kind === 'merge') return vscode.window.showWarningMessage("A merge can't be skipped.");
+  if (step === 'continue' && op.conflicts.length) {
+    const n = op.conflicts.length;
+    const open = 'Open Source Control';
+    const pick = await vscode.window.showWarningMessage(
+      `${n} ${n === 1 ? 'file still has' : 'files still have'} conflicts. Resolve and stage ${n === 1 ? 'it' : 'them'} first.`,
+      open,
+    );
+    if (pick === open) void vscode.commands.executeCommand('workbench.view.scm');
+    return;
+  }
+  if (step === 'abort') {
+    const detail =
+      op.kind === 'rebase'
+        ? `${op.head ?? 'HEAD'} goes back to where it was before the rebase.`
+        : 'Changes made by it, including resolved conflicts, are discarded.';
+    if (!(await confirm(`Abort the ${name}?`, detail, 'Abort'))) return;
+  }
+  const verb = { continue: 'Continue', skip: 'Skip', abort: 'Abort' }[step];
+  return run(p, `${verb} ${name}`, [op.kind, `--${step}`], gitNoEditor);
+}
+
+async function bisectMark(repo: string, p: GraphController, mark: 'good' | 'bad') {
+  if ((await getOperation(repo))?.kind !== 'bisect') return vscode.window.showInformationMessage('No bisect in progress.');
+  try {
+    const out = await p.withBusy(`Bisect ${mark}`, () => git(repo, ['bisect', mark]));
+    const found = out.match(/^([0-9a-f]{7,40}) is the first bad commit/m);
+    if (found) {
+      void vscode.window.showInformationMessage(`First bad commit: ${short(found[1])}. End the bisect when done.`);
+      p.post({ type: 'jumpTo', hash: found[1] });
+    }
+  } catch (e) {
+    void vscode.window.showErrorMessage(`Bisect ${mark} failed: ${errorText(e)}`);
+  } finally {
+    p.refresh();
+  }
+}
+
+// ---- git flow ------------------------------------------------------------------
+
+const FLOW_TITLE: Record<FlowKind, string> = { feature: 'Feature', release: 'Release', hotfix: 'Hotfix' };
+
+/** Git-flow with plain git: start or finish a feature, release or hotfix branch. */
+async function gitFlow(repo: string, p: GraphController) {
+  const cfg = await readFlowConfig(repo);
+  const current = await currentBranch(repo);
+  const describe = (c: FlowChoice) => {
+    const base = c.kind === 'hotfix' ? cfg.main : cfg.develop;
+    if (c.action === 'start') return `${cfg.prefix[c.kind]}… from ${base}`;
+    return c.kind === 'feature' ? `merge into ${cfg.develop}` : `merge into ${cfg.main} and ${cfg.develop}, tag`;
+  };
+  type Item = vscode.QuickPickItem & { choice: FlowChoice };
+  const items: Item[] = flowChoices(cfg, current).map((c) => ({
+    label: c.action === 'finish' ? `$(check) Finish ${FLOW_TITLE[c.kind]} ${c.name}` : `$(add) Start ${FLOW_TITLE[c.kind]}`,
+    description: describe(c),
+    choice: c,
+  }));
+  const pick = await vscode.window.showQuickPick(items, { title: 'Git Flow' });
+  if (!pick) return;
+  const { action, kind } = pick.choice;
+  const label = FLOW_TITLE[kind];
+  let cmds: string[][];
+  if (action === 'start') {
+    const base = kind === 'hotfix' ? cfg.main : cfg.develop;
+    if (!cfg.branches.includes(cfg.main) && !cfg.branches.includes(base)) {
+      return vscode.window.showWarningMessage(`No ${base} branch to start from.`);
+    }
+    const name = await vscode.window.showInputBox({
+      title: `Start ${label}`,
+      prompt: `Creates ${cfg.prefix[kind]}<name> from ${base} and switches to it.`,
+      placeHolder: kind === 'feature' ? 'my-feature' : '1.2.0',
+      validateInput: (v) => (v.trim() ? validRefName(repo, cfg.prefix[kind] + v.trim()) : null),
+    });
+    if (!name?.trim()) return;
+    cmds = planStart(cfg, kind, name.trim(), cfg.branches);
+  } else {
+    const branch = current!;
+    if (!cfg.branches.includes(cfg.develop)) return vscode.window.showWarningMessage(`No ${cfg.develop} branch to merge into.`);
+    let tag: string | undefined;
+    if (kind !== 'feature') {
+      tag = await vscode.window.showInputBox({
+        title: `Finish ${label} ${pick.choice.name}: tag ${cfg.main}`,
+        prompt: 'Annotated tag for the merge on ' + cfg.main + '. Leave empty for no tag.',
+        value: suggestedTag(cfg, kind, branch),
+      });
+      if (tag === undefined) return;
+    }
+    const del = await vscode.window.showQuickPick(
+      [
+        { label: `Delete ${branch}`, description: 'After merging', deleteBranch: true },
+        { label: `Keep ${branch}`, deleteBranch: false },
+      ],
+      { title: `Finish ${label} ${pick.choice.name}` },
+    );
+    if (!del) return;
+    cmds = planFinish(cfg, kind, branch, { tag: tag?.trim() || undefined, deleteBranch: del.deleteBranch });
+  }
+  // Run in order; stop at the first failure (a conflict leaves the merge to the banner).
+  for (const args of cmds) {
+    if (!(await run(p, `${action === 'start' ? 'Start' : 'Finish'} ${label}: git ${args.join(' ')}`, args, gitNoEditor))) return;
+  }
+  void vscode.window.setStatusBarMessage(`$(check) ${action === 'start' ? 'Started' : 'Finished'} ${label.toLowerCase()}`, 3000);
 }
 
 async function copy(text: string, label: string): Promise<void> {

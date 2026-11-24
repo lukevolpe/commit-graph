@@ -23,6 +23,7 @@
   const emptyEl = $('empty');
   const syncEl = $('sync');
   const focusChip = $('focus-chip');
+  const opEl = $('op-banner');
 
   const saved = vscode.getState() || {};
   const state = {
@@ -57,6 +58,8 @@
     rowsVersion: 0,
     /** Compare mode: { base, other, from, to, files, error }; active only while base is selected. */
     cmp: null,
+    /** Merge/rebase/cherry-pick/revert/bisect in progress (see Operation in git.ts), or null. */
+    operation: null,
   };
   const layout = JSON.parse(document.body.dataset.layout || '{}');
   setDetailsWidth(layout.width || saved.detailsWidth || 380);
@@ -124,6 +127,8 @@
         state.outSet = new Set();
         state.inSet = new Set();
         renderSync();
+        state.operation = null;
+        renderOperation();
         updateFocusChip();
         state.rows = [];
         state.index = new Map();
@@ -155,6 +160,10 @@
       case 'busy':
         state.busy += m.busy ? 1 : -1;
         progress.classList.toggle('active', state.busy > 0);
+        break;
+      case 'operation':
+        state.operation = m.operation;
+        renderOperation();
         break;
       case 'error':
         state.loading = false;
@@ -197,6 +206,8 @@
       // A pinned branch that no longer exists (deleted, or hidden by scope) drops its highlight.
       if (state.pin && !focusInfo()) setPin(null);
       renderSync();
+      state.operation = m.operation || null;
+      renderOperation();
     }
     updateFocusChip();
     render();
@@ -427,6 +438,58 @@ ${author}
   syncEl.addEventListener('click', (e) => {
     const b = /** @type {HTMLElement} */ (e.target).closest('[data-act]');
     if (b) post(b.dataset.act);
+  });
+
+  // ---- operation in progress banner ------------------------------------------------
+
+  const OP_ICON = { merge: 'git-merge', rebase: 'git-compare', 'cherry-pick': 'git-commit', revert: 'discard', bisect: 'search' };
+  const MAX_OP_FILES = 12;
+
+  function renderOperation() {
+    const op = state.operation;
+    opEl.hidden = !op;
+    if (!op) {
+      opEl.innerHTML = '';
+      return;
+    }
+    const b = (s) => `<b>${esc(s || 'HEAD')}</b>`;
+    const commit = () => `${b(op.incoming)}${op.subject ? ` <span class="op-subject">${esc(op.subject)}</span>` : ''}`;
+    let text = {
+      merge: () => `Merging ${b(op.incoming)} into ${b(op.head)}`,
+      rebase: () => `Rebasing ${b(op.head)} onto ${b(op.incoming)}${op.step && op.total ? ` · step ${op.step} of ${op.total}` : ''}`,
+      'cherry-pick': () => `Cherry-picking ${commit()}`,
+      revert: () => `Reverting ${commit()}`,
+      bisect: () => `Bisecting${op.head ? ` from ${b(op.head)}` : ''} · mark the checked-out commit`,
+    }[op.kind]();
+    const n = op.conflicts.length;
+    if (n) text += ` · <span class="op-conflicts">${n} ${n === 1 ? 'conflict' : 'conflicts'}</span>`;
+    else if (op.kind !== 'bisect') text += ' · ready to continue';
+    const btn = (act, label, tip, cls = '') =>
+      `<button class="op-btn${cls}" data-op="${act}" title="${esc(tip)}">${label}</button>`;
+    const btns =
+      op.kind === 'bisect'
+        ? btn('BisectGood', 'Good', 'The checked-out commit is good') +
+          btn('BisectBad', 'Bad', 'The checked-out commit is bad') +
+          btn('Abort', 'End', 'End the bisect and go back')
+        : btn('Continue', 'Continue', n ? 'Resolve and stage the conflicts first' : `git ${op.kind} --continue`, n ? '' : ' primary') +
+          (op.kind === 'merge' ? '' : btn('Skip', 'Skip', `Skip this commit (git ${op.kind} --skip)`)) +
+          btn('Abort', 'Abort', `git ${op.kind} --abort`);
+    const files = op.conflicts
+      .slice(0, MAX_OP_FILES)
+      .map((f) => `<button class="op-file" data-path="${esc(f)}" title="Open ${esc(f)}"><i class="codicon codicon-warning"></i>${esc(f)}</button>`)
+      .join('');
+    const more = n > MAX_OP_FILES ? `<span class="muted">+${n - MAX_OP_FILES} more</span>` : '';
+    opEl.innerHTML =
+      `<i class="codicon codicon-${OP_ICON[op.kind]} op-icon"></i><span class="op-text">${text}</span><span class="spacer"></span>${btns}` +
+      (n ? `<div class="op-files">${files}${more}</div>` : '');
+  }
+
+  opEl.addEventListener('click', (e) => {
+    const t = /** @type {HTMLElement} */ (e.target);
+    const b = t.closest('[data-op]');
+    if (b) return post('operation', { action: /** @type {HTMLElement} */ (b).dataset.op });
+    const f = t.closest('[data-path]');
+    if (f) post('openFile', { path: /** @type {HTMLElement} */ (f).dataset.path });
   });
 
   // ---- lane highlight ------------------------------------------------------------

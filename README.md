@@ -16,6 +16,8 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - **Stashes**: each stash shows as a row just above the commit it was made on, with a hollow square and a muted `stash@{n}` label; click for its message and files (untracked too), right-click to apply, pop or drop. Stashes on commits hidden by scope or not loaded yet stay hidden until their base is shown
 - **Search** (Ctrl+F): message, author, email or SHA, across all history; non-matches dim in place; Enter / Shift+Enter or F3 step through matches. Terms combine (all must match): `author:ada` or `author:"Ada L"`, `message:fix`, `file:src/git.ts` or `file:*.css`, `after:2026-01-01` / `before:2026-06-01` / `after:2w`, `type:merge` / `type:nonmerge`, `#abc123` or `sha:abc123`
 - **Scrollbar markers**: like the editor's overview ruler: HEAD, selection, branch tips, uncommitted changes, unpushed ↑ / unpulled ↓ commits, search matches and the highlighted branch line, drawn under the scrollbar
+- **Merge / rebase in progress**: a banner under the toolbar shows what's happening ("Merging feature/x into main · 3 conflicts", "Rebasing step 2 of 5"), lists conflicted files (click to open; VS Code's merge editor takes over) and offers Continue, Skip and Abort. Also covers cherry-pick, revert and bisect (Good / Bad / End). Updates live as you resolve
+- **Git flow**: **Commit Graph: Git Flow…** (palette or the view's ⋯ menu) starts or finishes feature, release and hotfix branches with plain git, no git-flow install needed. Honours `gitflow.branch.*` and `gitflow.prefix.*` config; finishing merges `--no-ff`, tags releases and hotfixes, and optionally deletes the branch
 - **Scope**: all branches, or the current branch only
 - **Live**: refreshes on commits, checkouts, fetches and file saves; history loads 500 commits at a time
 - **Keys**: ↑ ↓ PgUp PgDn Home End to move, P / Shift+P to go to first / second parent, C to the child on the same line, [ ] to the previous / next merge, H to HEAD, B to pick a branch or tag, Enter to open changes, Ctrl+C to copy SHA, Ctrl+click to compare, L to highlight the line, Esc to close details or clear the highlight, ? for the key list
@@ -38,6 +40,7 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - `src/git.ts`: every git call and parser
 - `src/lanes.ts`: lane layout algorithm (pure, unit tested)
 - `src/search.ts`: search query parser (pure, unit tested)
+- `src/gitflow.ts`: git-flow command planner (pure, unit tested)
 - `src/controller.ts`: drives one graph webview: paging, live refresh, search, details, diffs
 - `src/hosts.ts`: editor tab and panel/sidebar view hosts
 - `src/repos.ts`: picks which repository to show
