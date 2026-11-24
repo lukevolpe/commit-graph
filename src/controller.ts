@@ -8,6 +8,8 @@ import {
   SearchEntry,
   Stash,
   SyncState,
+  commit,
+  discard,
   getChanges,
   getDetails,
   getFileMatches,
@@ -16,17 +18,21 @@ import {
   getSearchIndex,
   getStashDetails,
   getStashes,
+  getStatus,
   getSync,
   getWorkingChanges,
   git,
   gitDirs,
   insertStashes,
+  lastMessage,
   search,
   Operation,
   getOperation,
+  stage,
+  unstage,
 } from './git';
 import { GraphLayout, GraphRow } from './lanes';
-import { revisionUri } from './content';
+import { indexUri, revisionUri } from './content';
 import { SEARCH_HELP, parseQuery } from './search';
 import { getWorktrees, samePath } from './worktrees';
 
@@ -57,7 +63,10 @@ type InMessage =
   | { type: 'undo' }
   | { type: 'layout'; width: number; height: number }
   | { type: 'setHistory'; file: string | null }
-  | { type: 'operation'; action: 'Continue' | 'Skip' | 'Abort' | 'BisectGood' | 'BisectBad' };
+  | { type: 'operation'; action: 'Continue' | 'Skip' | 'Abort' | 'BisectGood' | 'BisectBad' }
+  | { type: 'stage' | 'unstage' | 'discard'; files: FileChange[] }
+  | { type: 'commit'; message: string; amend: boolean }
+  | { type: 'openStatusDiff'; file: FileChange; staged: boolean };
 
 type Row = Commit & { graph: GraphRow; wip?: boolean; stash?: string };
 
@@ -327,6 +336,15 @@ export class GraphController {
       case 'setHistory':
         this.showFileHistory(msg.file ?? undefined);
         break;
+      case 'stage':
+      case 'unstage':
+      case 'discard':
+      case 'commit':
+        void this.commitPanel(msg);
+        break;
+      case 'openStatusDiff':
+        void this.openStatusDiff(msg.file, msg.staged);
+        break;
     }
   }
 
@@ -454,7 +472,14 @@ export class GraphController {
     try {
       const details =
         hash === WIP
-          ? { hash: WIP, wip: true, parents: this.head ? [this.head] : [], files: await getWorkingChanges(this.repo) }
+          ? {
+              hash: WIP,
+              wip: true,
+              parents: this.head ? [this.head] : [],
+              files: await getWorkingChanges(this.repo),
+              status: await getStatus(this.repo),
+              lastMessage: await lastMessage(this.repo),
+            }
           : this.stashes.some((s) => s.hash === hash)
             ? await getStashDetails(this.repo, hash)
             : await getDetails(this.repo, hash);
@@ -493,6 +518,83 @@ export class GraphController {
     });
     const title = hash === WIP ? 'Uncommitted Changes' : `Changes in ${hash.slice(0, 7)}`;
     await vscode.commands.executeCommand('vscode.changes', title, resources);
+  }
+
+  // ---- commit panel (uncommitted row) -----------------------------------------
+
+  private async commitPanel(msg: Extract<InMessage, { type: 'stage' | 'unstage' | 'discard' | 'commit' }>): Promise<void> {
+    const paths = (fs: FileChange[]) => fs.flatMap((f) => (f.oldPath ? [f.oldPath, f.path] : [f.path]));
+    try {
+      if (msg.type === 'stage') await stage(this.repo, paths(msg.files));
+      else if (msg.type === 'unstage') await unstage(this.repo, paths(msg.files));
+      else if (msg.type === 'discard') {
+        if (!(await this.confirmDiscard(msg.files))) return;
+        await discard(this.repo, msg.files);
+      } else if (msg.type === 'commit') {
+        const all = !msg.amend && !(await getStatus(this.repo)).staged.length;
+        if (all && !(await this.confirmCommitAll())) return;
+        await this.withBusy('Committing', () => commit(this.repo, msg.message, { amend: msg.amend, all }));
+        this.post({ type: 'committed' });
+      }
+    } catch (e) {
+      void vscode.window.showErrorMessage(errorText(e));
+    }
+    // Refresh now rather than waiting for the index watcher's debounce.
+    void this.enqueue(() => this.updateWip());
+  }
+
+  private async confirmDiscard(files: FileChange[]): Promise<boolean> {
+    const untracked = files.filter((f) => f.untracked).length;
+    const name = files.length === 1 ? path.posix.basename(files[0].path) : `${files.length} files`;
+    const [text, button] =
+      untracked === files.length
+        ? [`Delete ${files.length === 1 ? 'untracked file ' : 'untracked '}${name}?`, 'Delete']
+        : [`Discard changes in ${name}?`, 'Discard Changes'];
+    const pick = await vscode.window.showWarningMessage(
+      text,
+      { modal: true, detail: untracked ? 'Untracked files are deleted. This cannot be undone.' : 'This cannot be undone.' },
+      button,
+    );
+    return pick === button;
+  }
+
+  /** No staged changes: offer `commit -a`, like VS Code's smart commit. "Always" is remembered. */
+  private async confirmCommitAll(): Promise<boolean> {
+    const key = 'commitGraph.smartCommit';
+    if (this.context.globalState.get<boolean>(key)) return true;
+    const pick = await vscode.window.showWarningMessage(
+      'There are no staged changes. Stage all tracked changes and commit them?',
+      { modal: true, detail: 'Untracked files are left out.' },
+      'Yes',
+      'Always',
+    );
+    if (pick === 'Always') await this.context.globalState.update(key, true);
+    return pick === 'Yes' || pick === 'Always';
+  }
+
+  /** Staged: HEAD ↔ index. Unstaged: index ↔ working tree. Conflicts open the file itself. */
+  private async openStatusDiff(f: FileChange, staged: boolean): Promise<void> {
+    const file = vscode.Uri.file(path.join(this.repo, f.path));
+    if (f.status === 'U') {
+      await vscode.window.showTextDocument(file, { preview: true });
+      return;
+    }
+    const empty = (p: string) => revisionUri(this.repo, p, '');
+    const name = path.posix.basename(f.path);
+    let left: vscode.Uri;
+    let right: vscode.Uri;
+    let title: string;
+    if (staged) {
+      const leftPath = f.oldPath ?? f.path;
+      left = f.status === 'A' || !this.head ? empty(leftPath) : revisionUri(this.repo, leftPath, this.head);
+      right = f.status === 'D' ? empty(f.path) : indexUri(this.repo, f.path);
+      title = `${name} (HEAD ↔ Index)`;
+    } else {
+      left = f.untracked ? empty(f.path) : indexUri(this.repo, f.path);
+      right = f.status === 'D' ? empty(f.path) : file;
+      title = f.untracked ? `${name} (Untracked)` : `${name} (Index ↔ Working Tree)`;
+    }
+    await vscode.commands.executeCommand('vscode.diff', left, right, title, { preview: true });
   }
 
   // ---- compare two commits -------------------------------------------------
