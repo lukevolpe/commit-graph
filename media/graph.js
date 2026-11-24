@@ -211,6 +211,7 @@
     let html = '';
     for (let i = start; i < end; i++) html += rowHtml(state.rows[i], i, f);
     body.innerHTML = html;
+    drawRuler(f);
 
     if (!state.done && !state.loading && state.rows.length && end >= state.rows.length - 150) {
       state.loading = true;
@@ -967,6 +968,105 @@ ${filesHtml(d)}`;
 
   function attr(s) {
     return s.replace(/&/g, '&amp;').replace(/'/g, '&#39;');
+  }
+
+  // ---- overview ruler ----------------------------------------------------------
+  //
+  // A strip of ticks behind the native scrollbar, like the editor's overview ruler: HEAD,
+  // selection, branch tips, uncommitted changes, unpushed/unpulled, search matches and the
+  // highlighted line. It sits *under* the scroller (the scrollbar track is transparent), so
+  // the thumb draws on top and every click still goes to the real scrollbar.
+
+  const ruler = document.createElement('canvas');
+  ruler.id = 'ruler';
+  ruler.setAttribute('aria-hidden', 'true');
+  scroller.insertAdjacentElement('beforebegin', ruler);
+  const rulerCtx = ruler.getContext('2d');
+  let rulerKey = '';
+  let rulerInputs = [];
+  // Theme switches restyle the root/body: invalidate so colours are re-read.
+  const themeWatch = new MutationObserver(() => {
+    rulerKey = '';
+    render();
+  });
+  themeWatch.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
+  // Details pane opening/stacking resizes the list without a window resize.
+  new ResizeObserver(render).observe(scroller);
+
+  function rulerColor(name) {
+    return getComputedStyle(ruler).getPropertyValue(name).trim() || 'transparent';
+  }
+
+  /** Redraws only when something it shows changed; cheap no-op on plain scroll frames. */
+  function drawRuler(f) {
+    const n = state.rows.length;
+    const h = scroller.clientHeight;
+    const show = n > 0 && n * ROW > h;
+    const bar = scroller.offsetWidth - scroller.clientWidth || 10;
+    const dpr = window.devicePixelRatio || 1;
+    const inputs = [state.rowsVersion, state.matches, state.selected, f, state.head, h, bar, dpr, scroller.offsetTop];
+    const key = show ? 'y' : 'n';
+    if (key === rulerKey && inputs.every((v, k) => v === rulerInputs[k])) return;
+    rulerKey = key;
+    rulerInputs = inputs;
+    ruler.classList.toggle('shown', show);
+    if (!show) return;
+
+    ruler.style.top = scroller.offsetTop + 'px';
+    ruler.style.width = bar + 'px';
+    ruler.style.height = h + 'px';
+    ruler.width = Math.round(bar * dpr);
+    ruler.height = Math.round(h * dpr);
+    const c = rulerCtx;
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, bar, h);
+
+    const y = (i) => (i / n) * h;
+    const tick = Math.max(2, h / n);
+    const half = Math.floor(bar / 2);
+    const draw = (color, i, x0, w, th = tick) => {
+      c.fillStyle = color;
+      c.fillRect(x0, Math.min(h - th, Math.max(0, y(i) + h / n / 2 - th / 2)), w, th);
+    };
+
+    // Highlighted line: one faint continuous band over the rows it covers.
+    if (f) {
+      let last = f.end;
+      for (const k of f.marks.keys()) if (k > last) last = k;
+      c.globalAlpha = 0.35;
+      c.fillStyle = rulerColor('--ruler-band');
+      c.fillRect(0, y(f.start), bar, Math.max(2, y(last + 1) - y(f.start)));
+      c.globalAlpha = 1;
+    }
+
+    // Left half: branch tips and sync state. Right half: search matches.
+    const branch = rulerColor('--ruler-branch');
+    const out = rulerColor('--outgoing');
+    const inc = rulerColor('--incoming');
+    for (let i = 0; i < n; i++) {
+      const r = state.rows[i];
+      if (state.outSet.has(r.hash)) draw(out, i, 0, half);
+      else if (state.inSet.has(r.hash)) draw(inc, i, 0, half);
+      else if (r.refs.some((x) => x.kind === 'branch')) {
+        c.globalAlpha = 0.7;
+        draw(branch, i, 0, half);
+        c.globalAlpha = 1;
+      }
+    }
+    const match = rulerColor('--ruler-match');
+    for (const hash of state.matches) {
+      const i = state.index.get(hash);
+      if (i !== undefined) draw(match, i, half, bar - half);
+    }
+
+    // Full width, on top: uncommitted row, selection, HEAD (strongest).
+    const wip = state.index.get(WIP);
+    if (wip !== undefined) draw(rulerColor('--ruler-wip'), wip, 0, bar);
+    const sel = state.selected ? state.index.get(state.selected) : undefined;
+    if (sel !== undefined) draw(rulerColor('--ruler-selected'), sel, 0, bar);
+    const head = state.head ? state.index.get(state.head) : undefined;
+    if (head !== undefined) draw(rulerColor('--ruler-head'), head, 0, bar, Math.max(3, tick));
   }
 
   updateScopeButtons();

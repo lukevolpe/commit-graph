@@ -13,6 +13,7 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - **Sync**: ↓ pull and ↑ push counts in the toolbar (hover to preview the commits; Publish when a branch has no upstream); unpushed ↑ and unpulled ↓ commits marked in the Commit column; branch labels show ↓1↑2 or ⚠ when the upstream was deleted
 - **Highlight a branch**: hover a label to light its line down to where it forked from your branch; right-click → Highlight Branch Line (or select a commit and press L) to pin it; Esc or the chip clears it
 - **Search** (Ctrl+F): message, author, email or SHA, across all history; Enter / Shift+Enter or F3 step through matches
+- **Scrollbar markers**: like the editor's overview ruler: HEAD, selection, branch tips, uncommitted changes, unpushed ↑ / unpulled ↓ commits, search matches and the highlighted branch line, drawn under the scrollbar
 - **Scope**: all branches, or the current branch only
 - **Live**: refreshes on commits, checkouts, fetches and file saves; history loads 500 commits at a time
 - **Keys**: ↑ ↓ PgUp PgDn Home End to move, Enter to open changes, Ctrl+C to copy SHA, L to highlight the line, Esc to close details or clear the highlight

@@ -281,6 +281,21 @@ button.icon:hover { background: var(--vscode-toolbar-hoverBackground); }
   outline: none;
 }
 #spacer { width: 1px; }
+
+/* Overview ruler: drawn by graph.js, behind the (transparent-track) scrollbar. */
+#ruler {
+  position: absolute;
+  right: 0;
+  display: none;
+  pointer-events: none;
+  --ruler-head: var(--vscode-editorCursor-foreground, var(--vscode-foreground));
+  --ruler-selected: var(--vscode-focusBorder, var(--vscode-editorOverviewRuler-selectionHighlightForeground));
+  --ruler-branch: var(--muted);
+  --ruler-wip: var(--vscode-editorOverviewRuler-modifiedForeground, var(--mod));
+  --ruler-match: var(--vscode-editorOverviewRuler-findMatchForeground, rgba(209, 134, 22, 0.7));
+  --ruler-band: var(--vscode-editorOverviewRuler-rangeHighlightForeground, var(--vscode-focusBorder, #007acc));
+}
+#ruler.shown { display: block; }
 #rows { position: absolute; top: 0; left: 0; right: 0; will-change: transform; }
 
 #rows .row { cursor: default; }
