@@ -6,6 +6,7 @@ import { RevisionContentProvider, SCHEME } from './content';
 import { registerActions } from './actions';
 import { pickRepo } from './repos';
 import { registerHistory } from './history';
+import { registerRebaseEditor } from './rebaseEditor';
 
 export function activate(context: vscode.ExtensionContext): void {
   const view = new GraphViewProvider(context);
@@ -53,6 +54,7 @@ export function activate(context: vscode.ExtensionContext): void {
     view.controller?.setRepo(repo);
     return view.controller;
   });
+  registerRebaseEditor(context);
 }
 
 export function deactivate(): void {}

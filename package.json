@@ -297,6 +297,11 @@
         "title": "Git Flow…",
         "category": "Commit Graph",
         "icon": "$(git-branch)"
+      },
+      {
+        "command": "commitGraph.interactiveRebase",
+        "title": "Interactive Rebase From Here…",
+        "category": "Commit Graph"
       }
     ],
     "menus": {
@@ -459,6 +464,10 @@
         {
           "command": "commitGraph.revealLineCommit",
           "when": "editorIsOpen && resourceScheme == file"
+        },
+        {
+          "command": "commitGraph.interactiveRebase",
+          "when": "false"
         }
       ],
       "webview/context": [
@@ -651,6 +660,11 @@
           "command": "commitGraph.removeWorktree",
           "when": "webviewId == 'commitGraph' && webviewSection =~ /^(ref|worktree)$/ && worktreePath",
           "group": "3_manage@3"
+        },
+        {
+          "command": "commitGraph.interactiveRebase",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'commit'",
+          "group": "2_integrate@5"
         }
       ],
       "view/title": [

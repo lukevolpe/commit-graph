@@ -10,6 +10,7 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - **Diffs**: click a file for VS Code's diff view; the multi-diff icon (or Enter / double-click) opens every change
 - **Compare two commits**: select one, Ctrl/Cmd+click another (or right-click → Compare with Selected) to list every file changed between them; click a file or press Enter for the diffs, Esc to exit
 - **Right-click a commit**: checkout, create branch or tag, cherry-pick, merge, rebase, revert, reset, compare with working tree, open on GitHub/GitLab/Bitbucket, copy SHA or message
+- **Interactive rebase**: right-click a commit on your branch → Interactive Rebase From Here… opens an editor tab listing the commits after it, oldest first. Pick, reword (edit the message inline), edit, squash, fixup or drop each one; reorder by dragging or Alt+↑/↓; P R E S F D set the focused row's action, Ctrl+Enter starts. Warns when the commits are already pushed. Runs `git rebase -i` with the todo written for you, no terminal; if it stops (edit or conflicts) it's a normal rebase: `git rebase --continue` or `--abort`. Ranges with merges aren't supported
 - **Right-click a label**: switch to it, merge, rebase onto it, rename, delete, copy name
 - **Drag a branch label** onto another branch label to merge, rebase or fast-forward (dropping A on B: Merge A into B, Rebase B onto A); onto a commit to rebase the branch onto it or merge the commit in. A branch that isn't checked out is switched to first. Esc cancels; drag near the top or bottom edge to scroll. The same actions are in the right-click menus
 - **Sync**: ↓ pull and ↑ push counts in the toolbar (hover to preview the commits; Publish when a branch has no upstream); unpushed ↑ and unpulled ↓ commits marked in the Commit column; branch labels show ↓1↑2 or ⚠ when the upstream was deleted
@@ -60,5 +61,7 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - `src/drop.ts`: drag-and-drop menu: which merge / rebase / fast-forward to offer (pure, unit tested)
 - `src/remotes.ts`: remotes, default branch, pull request URLs (unit tested)
 - `src/history.ts`: file history, line history and blame commands from the editor and explorer
+- `src/rebase.ts`: interactive rebase: todo building, checks and running git (unit and repo tested)
+- `src/rebaseEditor.ts`: the rebase editor tab (`media/rebase.js`, `media/rebase.css`)
 - `src/content.ts`: read-only "file at revision" documents for diffs
 - `media/graph.js`, `media/graph.css`: webview UI
