@@ -40,6 +40,8 @@
     query: '',
     matches: [],
     matchSet: new Set(),
+    /** Lowercased words to mark in subjects (from the host's query parse). */
+    terms: [],
     matchPos: -1,
     pendingReveal: null,
     busy: 0,
@@ -89,6 +91,7 @@
         if (m.query !== state.query) break;
         state.matches = m.hashes;
         state.matchSet = new Set(m.hashes);
+        state.terms = m.terms || [];
         state.matchPos = -1;
         updateSearchCount();
         if (m.hashes.length) gotoMatch(1);
@@ -208,6 +211,7 @@
     body.style.transform = `translateY(${start * ROW}px)`;
     const f = activeFocus();
     scroller.classList.toggle('focusing', !!f);
+    scroller.classList.toggle('searching', !!state.matches.length);
     let html = '';
     for (let i = start; i < end; i++) html += rowHtml(state.rows[i], i, f);
     body.innerHTML = html;
@@ -250,7 +254,8 @@
 
   function rowHtml(r, i, f) {
     const sel = r.hash === state.selected;
-    const dim = state.query && !state.matchSet.has(r.hash);
+    // Dim non-matches only once there are matches: not while waiting, not on "No results".
+    const dim = state.matches.length > 0 && !state.matchSet.has(r.hash);
     const off = !!f && !f.marks.get(i)?.node;
     const cls = ['row', sel && 'selected', dim && 'dim', off && 'off', r.hash === state.head && 'head', r.wip && 'wip-row']
       .filter(Boolean)
@@ -800,12 +805,24 @@ ${filesHtml(d)}`;
     else searchCount.textContent = `${state.matchPos + 1 || '–'} of ${state.matches.length.toLocaleString()}`;
   }
 
+  /** Marks the query's plain/message terms (from the host's parse) in a subject. */
   function highlight(text) {
-    const q = state.query.toLowerCase();
-    if (!q) return esc(text);
-    const i = text.toLowerCase().indexOf(q);
-    if (i < 0) return esc(text);
-    return esc(text.slice(0, i)) + '<mark>' + esc(text.slice(i, i + q.length)) + '</mark>' + esc(text.slice(i + q.length));
+    const terms = state.query ? state.terms || [] : [];
+    if (!terms.length) return esc(text);
+    const lower = text.toLowerCase();
+    // Covered character ranges, merged so overlapping terms don't nest marks.
+    const on = new Array(text.length).fill(false);
+    for (const t of terms) {
+      for (let i = lower.indexOf(t); t && i >= 0; i = lower.indexOf(t, i + t.length)) on.fill(true, i, i + t.length);
+    }
+    let out = '';
+    for (let i = 0; i < text.length; ) {
+      let j = i;
+      while (j < text.length && on[j] === on[i]) j++;
+      out += on[i] ? '<mark>' + esc(text.slice(i, j)) + '</mark>' : esc(text.slice(i, j));
+      i = j;
+    }
+    return out;
   }
 
   // ---- toolbar ---------------------------------------------------------------

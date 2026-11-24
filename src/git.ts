@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { ParsedQuery, filePathspecs, isEmptyQuery, parseQuery } from './search';
 
 export type RefKind = 'head' | 'branch' | 'remote' | 'tag';
 
@@ -327,30 +328,90 @@ export interface SearchEntry {
   hash: string;
   /** Lowercased message + author + email. */
   text: string;
+  /** Lowercased "name email"; `text` starts with it. */
+  author?: string;
+  /** Unix seconds (author date). */
+  date?: number;
+  parents?: number;
 }
 
 /** Everything search needs, in graph order. Built once per refresh. */
 export async function getSearchIndex(cwd: string, scope: Scope): Promise<SearchEntry[]> {
   const revs = await revArgs(cwd, scope);
   if (!revs) return [];
-  const fmt = ['%H', '%an', '%ae', '%B'].join('%x1f') + '%x1e';
+  const fmt = ['%H', '%P', '%at', '%an', '%ae', '%B'].join('%x1f') + '%x1e';
   const out = await git(cwd, ['log', '--topo-order', `--format=${fmt}`, ...revs, '--']);
   return out
     .split(RECORD)
     .map((r) => r.replace(/^\n/, ''))
     .filter(Boolean)
     .map((r) => {
-      const [hash, ...rest] = r.split(FIELD);
-      return { hash, text: rest.join(' ').toLowerCase() };
+      const [hash, parents, date, name, email, ...msg] = r.split(FIELD);
+      const author = `${name} ${email}`.toLowerCase();
+      return {
+        hash,
+        text: author + ' ' + msg.join(' ').toLowerCase(),
+        author,
+        date: Number(date),
+        parents: splitParents(parents).length,
+      };
     });
 }
 
-/** Case-insensitive match on message, author, email, or hash prefix. */
-export function search(index: SearchEntry[], query: string): string[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return [];
-  const hex = /^[0-9a-f]{4,40}$/.test(q);
-  return index.filter((e) => (hex && e.hash.startsWith(q)) || e.text.includes(q)).map((e) => e.hash);
+/**
+ * Matches every term of the query (AND): plain words against message, author,
+ * email or hash prefix, plus operators (see parseQuery). `files` is the set of
+ * commits matching the query's `file:` terms, from getFileMatches.
+ */
+export function search(index: SearchEntry[], query: string | ParsedQuery, files?: Set<string>): string[] {
+  const q = typeof query === 'string' ? parseQuery(query) : query;
+  if (isEmptyQuery(q)) return [];
+  const hit = (e: SearchEntry) => {
+    for (const t of q.text) {
+      const hex = /^[0-9a-f]{4,40}$/.test(t);
+      if (!(hex && e.hash.startsWith(t)) && !e.text.includes(t)) return false;
+    }
+    const msgStart = e.author ? e.author.length + 1 : 0;
+    for (const t of q.message) if (e.text.indexOf(t, msgStart) < 0) return false;
+    for (const t of q.author) if (!(e.author ?? e.text).includes(t)) return false;
+    for (const t of q.sha) if (!e.hash.startsWith(t)) return false;
+    if (q.after !== undefined && !((e.date ?? 0) >= q.after)) return false;
+    if (q.before !== undefined && !((e.date ?? Infinity) < q.before)) return false;
+    if (q.merge !== undefined && (e.parents ?? 0) > 1 !== q.merge) return false;
+    if (q.files.length && files && !files.has(e.hash)) return false;
+    return true;
+  };
+  return index.filter(hit).map((e) => e.hash);
+}
+
+/** Most commits one `file:` term returns: keeps a broad glob on a huge repo bounded. */
+export const FILE_MATCH_LIMIT = 20000;
+
+/**
+ * Commits in scope touching a path or glob (see filePathspecs). A merge counts
+ * when it changes the path vs its first parent, matching the details pane.
+ */
+export async function getFileMatches(cwd: string, scope: Scope, pattern: string): Promise<Set<string>> {
+  const revs = await revArgs(cwd, scope);
+  const specs = filePathspecs(pattern);
+  if (!revs || !specs.length) return new Set();
+  const base = ['log', '--full-history', `--max-count=${FILE_MATCH_LIMIT}`];
+  const tail = [...revs, '--', ...specs];
+  let out: string;
+  try {
+    out = await git(cwd, [...base, '--format=%x1e%H%x1f%P', '--name-only', '--diff-merges=first-parent', ...tail]);
+  } catch {
+    // git < 2.31: no --diff-merges; keep any merge git lists.
+    return new Set((await git(cwd, [...base, '--format=%H', ...tail])).split('\n').filter(Boolean));
+  }
+  const hits = new Set<string>();
+  for (const r of out.split(RECORD)) {
+    const [hash, rest = ''] = r.split(FIELD);
+    if (!hash) continue;
+    const [parents, ...names] = rest.split('\n');
+    if (splitParents(parents).length < 2 || names.some(Boolean)) hits.add(hash.trim());
+  }
+  return hits;
 }
 
 /** Web URL for a commit on GitHub, GitLab, Bitbucket and similar hosts. */

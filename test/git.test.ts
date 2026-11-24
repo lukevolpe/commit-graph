@@ -1,12 +1,13 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   commitWebUrl,
   getChanges,
   getDetails,
+  getFileMatches,
   getHead,
   getLog,
   getSearchIndex,
@@ -20,6 +21,7 @@ import {
   search,
 } from '../src/git';
 import { GraphLayout } from '../src/lanes';
+import { parseQuery } from '../src/search';
 
 test('parseRefs handles branches, remotes, tags, HEAD', () => {
   assert.deepEqual(
@@ -229,6 +231,55 @@ test('sync state: ahead, behind, gone upstream and publish remote', async () => 
     assert.equal(s.branch, 'fresh');
     assert.equal(s.current, null);
     assert.deepEqual([s.outgoing, s.incoming], [[], []]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('file search: paths, globs, directories, scope', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'commit-graph-files-'));
+  const h = (...args: string[]) => git(root, ['-c', 'user.name=T', '-c', 'user.email=t@t', ...args]);
+  // Merges count when they change the path vs their first parent, like the details pane.
+  try {
+    await h('init', '-q', '-b', 'main');
+    mkdirSync(join(root, 'src', 'ui'), { recursive: true });
+    writeFileSync(join(root, 'src', 'git.ts'), '1\n');
+    await h('add', '.');
+    await h('commit', '-q', '-m', 'add git.ts');
+    writeFileSync(join(root, 'src', 'ui', 'Style.CSS'), 'a{}\n');
+    await h('add', '.');
+    await h('commit', '-q', '-m', 'add css');
+    await h('checkout', '-q', '-b', 'side');
+    appendFileSync(join(root, 'src', 'git.ts'), '2\n');
+    await h('commit', '-q', '-am', 'side edit');
+    await h('checkout', '-q', 'main');
+    writeFileSync(join(root, 'top.css'), 'b{}\n');
+    await h('add', '.');
+    await h('commit', '-q', '-m', 'top css');
+    await h('branch', 'later');
+    await h('merge', '-q', '--no-ff', 'side', '-m', 'merge side');
+    await h('checkout', '-q', 'later');
+
+    const index = await getSearchIndex(root, 'all');
+    const subj = async (q: string, scope: 'all' | 'current' = 'all') => {
+      const parsed = parseQuery(q);
+      const sets = await Promise.all(parsed.files.map((p) => getFileMatches(root, scope, p)));
+      const files = sets.length ? new Set([...sets[0]].filter((x) => sets.every((s) => s.has(x)))) : undefined;
+      const hits = new Set(search(index, parsed, files));
+      return (await getLog(root, 'all', 0, 100)).filter((c) => hits.has(c.hash)).map((c) => c.subject);
+    };
+    assert.deepEqual(await subj('file:src/git.ts'), ['merge side', 'side edit', 'add git.ts']);
+    assert.deepEqual(await subj('file:git.ts'), ['merge side', 'side edit', 'add git.ts']);
+    assert.deepEqual(await subj('file:*.css'), ['top css', 'add css']);
+    assert.deepEqual(await subj('file:/*.css'), ['top css']);
+    assert.deepEqual(await subj('file:src/ui'), ['add css']);
+    assert.deepEqual(await subj('file:SRC/UI/style.css'), ['add css']);
+    assert.deepEqual(await subj('file:src'), ['merge side', 'side edit', 'add css', 'add git.ts']);
+    assert.deepEqual(await subj('file:src side'), ['merge side', 'side edit']);
+    assert.deepEqual(await subj('file:src file:*.css type:nonmerge'), ['add css']);
+    assert.deepEqual(await subj('file:git.ts', 'current'), ['add git.ts']);
+    assert.deepEqual(await subj('file:nope.txt'), []);
+    assert.deepEqual(await subj('type:merge'), ['merge side']);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
