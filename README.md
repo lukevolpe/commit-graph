@@ -14,11 +14,13 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - **Sync**: ↓ pull and ↑ push counts in the toolbar (hover to preview the commits; Publish when a branch has no upstream); unpushed ↑ and unpulled ↓ commits marked in the Commit column; branch labels show ↓1↑2 or ⚠ when the upstream was deleted
 - **Highlight a branch**: hover a label to light its line down to where it forked from your branch; right-click → Highlight Branch Line (or select a commit and press L) to pin it; Esc or the chip clears it
 - **Stashes**: each stash shows as a row just above the commit it was made on, with a hollow square and a muted `stash@{n}` label; click for its message and files (untracked too), right-click to apply, pop or drop. Stashes on commits hidden by scope or not loaded yet stay hidden until their base is shown
+- **Stash changes**: right-click the uncommitted-changes row (or the view's ⋯ menu) → Stash Changes…: tracked only, including untracked, or staged only (git 2.35+), with an optional message
+- **Undo** (Ctrl+Z or the ↶ title button): undoes the last commit, amend, merge, rebase, pull, cherry-pick, revert, reset or checkout from the reflog, after a confirm saying where the branch goes back to. Uses `reset --keep`, so uncommitted changes are kept (it refuses if they'd be overwritten); warns before dropping commits already pushed
 - **Search** (Ctrl+F): message, author, email or SHA, across all history; non-matches dim in place; Enter / Shift+Enter or F3 step through matches. Terms combine (all must match): `author:ada` or `author:"Ada L"`, `message:fix`, `file:src/git.ts` or `file:*.css`, `after:2026-01-01` / `before:2026-06-01` / `after:2w`, `type:merge` / `type:nonmerge`, `#abc123` or `sha:abc123`
 - **Scrollbar markers**: like the editor's overview ruler: HEAD, selection, branch tips, uncommitted changes, unpushed ↑ / unpulled ↓ commits, search matches and the highlighted branch line, drawn under the scrollbar
 - **Scope**: all branches, or the current branch only
 - **Live**: refreshes on commits, checkouts, fetches and file saves; history loads 500 commits at a time
-- **Keys**: ↑ ↓ PgUp PgDn Home End to move, P / Shift+P to go to first / second parent, C to the child on the same line, [ ] to the previous / next merge, H to HEAD, B to pick a branch or tag, Enter to open changes, Ctrl+C to copy SHA, Ctrl+click to compare, L to highlight the line, Esc to close details or clear the highlight, ? for the key list
+- **Keys**: ↑ ↓ PgUp PgDn Home End to move, P / Shift+P to go to first / second parent, C to the child on the same line, [ ] to the previous / next merge, H to HEAD, B to pick a branch or tag, Enter to open changes, Ctrl+C to copy SHA, Ctrl+click to compare, L to highlight the line, Ctrl+Z to undo the last action, Esc to close details or clear the highlight, ? for the key list
 
 ## Where it lives
 
@@ -38,6 +40,7 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - `src/git.ts`: every git call and parser
 - `src/lanes.ts`: lane layout algorithm (pure, unit tested)
 - `src/search.ts`: search query parser (pure, unit tested)
+- `src/undo.ts`: reflog-based undo: classifies the last action (pure, unit tested) and plans how to reverse it
 - `src/controller.ts`: drives one graph webview: paging, live refresh, search, details, diffs
 - `src/hosts.ts`: editor tab and panel/sidebar view hosts
 - `src/repos.ts`: picks which repository to show

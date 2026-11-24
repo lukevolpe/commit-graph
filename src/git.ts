@@ -499,3 +499,28 @@ export async function getStashDetails(cwd: string, hash: string): Promise<Commit
     : [];
   return { ...d, parents: d.parents.slice(0, 1), files: [...d.files, ...untracked] };
 }
+
+export interface StashPushOptions {
+  message?: string;
+  /** Also stash untracked files (`-u`). */
+  untracked?: boolean;
+  /** Only what's staged (`--staged`, git 2.35+). */
+  staged?: boolean;
+}
+
+/** Arguments for `git stash push` with the given options. */
+export function stashPushArgs({ message, untracked, staged }: StashPushOptions): string[] {
+  const args = ['stash', 'push'];
+  if (untracked) args.push('--include-untracked');
+  if (staged) args.push('--staged');
+  if (message?.trim()) args.push('-m', message.trim());
+  return args;
+}
+
+/** True if `git version` output is at least major.minor. */
+export function gitAtLeast(versionOut: string, major: number, minor: number): boolean {
+  const m = /(\d+)\.(\d+)/.exec(versionOut);
+  if (!m) return false;
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  return a > major || (a === major && b >= minor);
+}
