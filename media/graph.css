@@ -396,6 +396,10 @@ mark {
   vertical-align: middle;
 }
 .stash-ref .codicon { font-size: 12px; }
+/* Worktree markers: a branch checked out elsewhere, a detached worktree's commit. */
+.ref .codicon.wt { color: var(--muted); }
+.wt-ref { max-width: 200px; }
+.wt-ref > span { overflow: hidden; text-overflow: ellipsis; }
 
 /* ---- avatars --------------------------------------------------------------- */
 

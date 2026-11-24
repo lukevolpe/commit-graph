@@ -187,6 +187,26 @@
         "command": "commitGraph.dropStash",
         "title": "Drop Stash…",
         "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.createWorktree",
+        "title": "Create Worktree…",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.openWorktree",
+        "title": "Open Worktree",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.removeWorktree",
+        "title": "Remove Worktree…",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.worktrees",
+        "title": "Worktrees…",
+        "category": "Commit Graph"
       }
     ],
     "menus": {
@@ -304,6 +324,18 @@
         },
         {
           "command": "commitGraph.dropStash",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.createWorktree",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.openWorktree",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.removeWorktree",
           "when": "false"
         }
       ],
@@ -452,6 +484,21 @@
           "command": "commitGraph.copySha",
           "when": "webviewId == 'commitGraph' && webviewSection == 'stash'",
           "group": "5_copy@1"
+        },
+        {
+          "command": "commitGraph.createWorktree",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && refKind =~ /^(branch|remote)$/ && !refCurrent && !worktreePath",
+          "group": "1_checkout@3"
+        },
+        {
+          "command": "commitGraph.openWorktree",
+          "when": "webviewId == 'commitGraph' && webviewSection =~ /^(ref|worktree)$/ && worktreePath",
+          "group": "1_checkout@0"
+        },
+        {
+          "command": "commitGraph.removeWorktree",
+          "when": "webviewId == 'commitGraph' && webviewSection =~ /^(ref|worktree)$/ && worktreePath",
+          "group": "3_manage@3"
         }
       ],
       "view/title": [
@@ -484,6 +531,11 @@
           "command": "commitGraph.switchRepo",
           "when": "view == commitGraph.view && workspaceFolderCount > 1",
           "group": "navigation@6"
+        },
+        {
+          "command": "commitGraph.worktrees",
+          "when": "view == commitGraph.view",
+          "group": "worktrees@1"
         }
       ]
     },

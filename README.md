@@ -14,6 +14,7 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - **Sync**: ↓ pull and ↑ push counts in the toolbar (hover to preview the commits; Publish when a branch has no upstream); unpushed ↑ and unpulled ↓ commits marked in the Commit column; branch labels show ↓1↑2 or ⚠ when the upstream was deleted
 - **Highlight a branch**: hover a label to light its line down to where it forked from your branch; right-click → Highlight Branch Line (or select a commit and press L) to pin it; Esc or the chip clears it
 - **Stashes**: each stash shows as a row just above the commit it was made on, with a hollow square and a muted `stash@{n}` label; click for its message and files (untracked too), right-click to apply, pop or drop. Stashes on commits hidden by scope or not loaded yet stay hidden until their base is shown
+- **Worktrees**: a branch checked out in another worktree gets a worktree icon (hover for its folder); a detached worktree shows a muted label on its commit. Right-click a branch → Create Worktree… (defaults to a `<repo>-<branch>` folder next to the repo; remote branches get a local tracking branch), then open it in a new window or add it to the workspace. Right-click a branch in another worktree → Open Worktree or Remove Worktree… (asks again before deleting uncommitted changes). Switching to such a branch offers to open its worktree instead. **Commit Graph: Worktrees…** (view title `…` menu or Command Palette) lists them to open, add, remove or prune
 - **Search** (Ctrl+F): message, author, email or SHA, across all history; non-matches dim in place; Enter / Shift+Enter or F3 step through matches. Terms combine (all must match): `author:ada` or `author:"Ada L"`, `message:fix`, `file:src/git.ts` or `file:*.css`, `after:2026-01-01` / `before:2026-06-01` / `after:2w`, `type:merge` / `type:nonmerge`, `#abc123` or `sha:abc123`
 - **Scrollbar markers**: like the editor's overview ruler: HEAD, selection, branch tips, uncommitted changes, unpushed ↑ / unpulled ↓ commits, search matches and the highlighted branch line, drawn under the scrollbar
 - **Scope**: all branches, or the current branch only
@@ -38,6 +39,7 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - `src/git.ts`: every git call and parser
 - `src/lanes.ts`: lane layout algorithm (pure, unit tested)
 - `src/search.ts`: search query parser (pure, unit tested)
+- `src/worktrees.ts`: `git worktree list` parser and worktree path helpers
 - `src/controller.ts`: drives one graph webview: paging, live refresh, search, details, diffs
 - `src/hosts.ts`: editor tab and panel/sidebar view hosts
 - `src/repos.ts`: picks which repository to show

@@ -57,6 +57,8 @@
     rowsVersion: 0,
     /** Compare mode: { base, other, from, to, files, error }; active only while base is selected. */
     cmp: null,
+    /** Working trees of the repo (see Worktree in worktrees.ts), `current` marks this one. */
+    worktrees: [],
   };
   const layout = JSON.parse(document.body.dataset.layout || '{}');
   setDetailsWidth(layout.width || saved.detailsWidth || 380);
@@ -173,6 +175,7 @@
       state.sync = m.sync;
       state.outSet = new Set(m.sync ? m.sync.outgoing : []);
       state.inSet = new Set(m.sync ? m.sync.incoming : []);
+      state.worktrees = m.worktrees || [];
       updateScopeButtons();
       if (!m.keep) scroller.scrollTop = 0;
       else scroller.scrollTop = top;
@@ -298,7 +301,7 @@
       : `<div class="col-author" title="${esc(r.author)} &lt;${esc(r.email)}&gt;">${avatar(r.author, r.email)}<span>${esc(r.author)}</span></div>`;
     return `<div class="${cls}" data-i="${i}" role="option" aria-selected="${sel}" data-vscode-context='${attr(JSON.stringify(ctx))}'>
 <div class="col-graph">${graphSvg(r, i, f)}</div>
-<div class="col-msg">${r.stash ? stashBadge(r.stash) : badges(r.refs, color)}<span class="subject">${highlight(r.subject)}</span></div>
+<div class="col-msg">${r.stash ? stashBadge(r.stash) : badges(r.refs, color)}${r.stash || r.wip ? '' : worktreeBadges(r.hash)}<span class="subject">${highlight(r.subject)}</span></div>
 ${author}
 <div class="col-date" title="${r.wip ? '' : fullDate(r.date)}">${r.wip ? '' : relDate(r.date)}</div>
 <div class="col-sha">${r.wip ? '<i class="codicon codicon-edit"></i>' : r.stash ? r.hash.slice(0, 7) : syncMark(r.hash) + r.hash.slice(0, 7)}</div>
@@ -351,6 +354,12 @@ ${author}
     };
     let tip = [r.name, ...(r.remotes || [])].join(', ') + (r.current ? ' (checked out)' : '');
     let sync = r.remotes ? '<i class="codicon codicon-cloud sync"></i>' : '';
+    const wt = r.kind === 'branch' ? otherWorktree(r.name) : null;
+    if (wt) {
+      ctx.worktreePath = wt.path;
+      tip += `\nChecked out in ${wt.path}`;
+      sync = `<i class="codicon codicon-worktree wt" title="${esc(`Checked out in ${wt.path}`)}"></i>` + sync;
+    }
     const t = r.kind === 'branch' && state.sync ? state.sync.tracking[r.name] : null;
     if (t && t.gone) {
       sync = '<i class="codicon codicon-warning gone"></i>';
@@ -360,6 +369,25 @@ ${author}
       tip += `\n${aheadBehind(t)} ${t.upstream}`;
     }
     return `<span class="ref ${r.kind}${r.current ? ' current' : ''} c${color}" title="${esc(tip)}" data-vscode-context='${attr(JSON.stringify(ctx))}'><i class="codicon codicon-${icon}"></i><span>${esc(r.name)}</span>${sync}</span>`;
+  }
+
+  /** Another worktree that has local branch `name` checked out, or null. */
+  function otherWorktree(name) {
+    return state.worktrees.find((w) => !w.current && w.branch === name) || null;
+  }
+
+  /** Muted label on the commit a detached worktree (not this one) sits on. */
+  function worktreeBadges(hash) {
+    const here = state.worktrees.filter((w) => !w.current && w.detached && w.head === hash);
+    if (!here.length) return '';
+    const html = here
+      .map((w) => {
+        const name = w.path.split(/[\\/]/).filter(Boolean).pop() || w.path;
+        const ctx = { webviewSection: 'worktree', sha: hash, worktreePath: w.path, preventDefaultContextMenuItems: true };
+        return `<span class="stash-ref wt-ref" title="${esc(`Worktree at ${w.path} (detached)`)}" data-vscode-context='${attr(JSON.stringify(ctx))}'><i class="codicon codicon-worktree"></i><span>${esc(name)}</span></span>`;
+      })
+      .join('');
+    return `<span class="refs">${html}</span>`;
   }
 
   /** Muted `stash@{n}` label. Not a ref: no ref menu, no lane hover. */
