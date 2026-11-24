@@ -105,11 +105,46 @@ async function revArgs(cwd: string, scope: Scope): Promise<string[] | null> {
   return scope === 'all' ? ['--branches', '--remotes', '--tags'] : null;
 }
 
-export async function getLog(cwd: string, scope: Scope, skip: number, limit: number): Promise<Commit[]> {
+/** `file`: repo-relative path; only commits touching it (see fileHistoryArgs). */
+export async function getLog(cwd: string, scope: Scope, skip: number, limit: number, file?: string): Promise<Commit[]> {
   const revs = await revArgs(cwd, scope);
   if (!revs) return [];
   const args = ['log', '--topo-order', '--decorate=full', `--format=${LOG_FORMAT}`, `--skip=${skip}`, `-n${limit}`];
+  if (file) return parseLog(await git(cwd, [...args, ...fileHistoryArgs(), ...revs, '--', `:(literal)${file}`]));
   return parseLog(await git(cwd, [...args, ...revs, '--']));
+}
+
+/**
+ * Path-limited walk that still draws as a graph: --parents makes %P the rewritten
+ * parents (nearest shown ancestors), --full-history keeps side branches that touched
+ * the file, --simplify-merges drops merges that add nothing. Not --follow (it can't
+ * rewrite parents or walk several refs), so history stops at a rename.
+ */
+function fileHistoryArgs(): string[] {
+  return ['--full-history', '--simplify-merges', '--parents'];
+}
+
+// ---- line history & blame ------------------------------------------------------
+
+/** Commits that changed lines `start`–`end` (1-based) of `file`, newest first. From HEAD. */
+export async function getLineHistory(cwd: string, file: string, start: number, end: number): Promise<string[]> {
+  const out = await git(cwd, ['log', '-s', '--format=%H', `-L${start},${end}:${file}`, 'HEAD']);
+  return out.split('\n').filter((l) => /^[0-9a-f]{40}$/.test(l));
+}
+
+/** Commit that last changed line `line` (1-based) of `file`; null when uncommitted or untracked. */
+export async function getBlameCommit(cwd: string, file: string, line: number): Promise<string | null> {
+  try {
+    return parseBlameCommit(await git(cwd, ['blame', '--porcelain', `-L${line},${line}`, '--', file]));
+  } catch {
+    return null;
+  }
+}
+
+/** First commit hash in `git blame --porcelain` output; null for the all-zero "not committed yet". */
+export function parseBlameCommit(out: string): string | null {
+  const h = out.match(/^([0-9a-f]{40}) /)?.[1];
+  return h && !/^0+$/.test(h) ? h : null;
 }
 
 export function parseLog(out: string): Commit[] {
@@ -336,11 +371,12 @@ export interface SearchEntry {
 }
 
 /** Everything search needs, in graph order. Built once per refresh. */
-export async function getSearchIndex(cwd: string, scope: Scope): Promise<SearchEntry[]> {
+export async function getSearchIndex(cwd: string, scope: Scope, file?: string): Promise<SearchEntry[]> {
   const revs = await revArgs(cwd, scope);
   if (!revs) return [];
   const fmt = ['%H', '%P', '%at', '%an', '%ae', '%B'].join('%x1f') + '%x1e';
-  const out = await git(cwd, ['log', '--topo-order', `--format=${fmt}`, ...revs, '--']);
+  const limit = file ? [...fileHistoryArgs(), ...revs, '--', `:(literal)${file}`] : [...revs, '--'];
+  const out = await git(cwd, ['log', '--topo-order', `--format=${fmt}`, ...limit]);
   return out
     .split(RECORD)
     .map((r) => r.replace(/^\n/, ''))

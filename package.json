@@ -250,6 +250,22 @@
         "command": "commitGraph.worktrees",
         "title": "Worktrees…",
         "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.showFileHistory",
+        "title": "Show File History in Commit Graph",
+        "category": "Commit Graph",
+        "icon": "$(history)"
+      },
+      {
+        "command": "commitGraph.showLineHistory",
+        "title": "Show Line History in Commit Graph",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.revealLineCommit",
+        "title": "Reveal Commit in Graph",
+        "category": "Commit Graph"
       }
     ],
     "menus": {
@@ -400,6 +416,18 @@
         {
           "command": "commitGraph.removeWorktree",
           "when": "false"
+        },
+        {
+          "command": "commitGraph.showFileHistory",
+          "when": "resourceScheme == file"
+        },
+        {
+          "command": "commitGraph.showLineHistory",
+          "when": "editorIsOpen && resourceScheme == file"
+        },
+        {
+          "command": "commitGraph.revealLineCommit",
+          "when": "editorIsOpen && resourceScheme == file"
         }
       ],
       "webview/context": [
@@ -644,6 +672,37 @@
           "command": "commitGraph.worktrees",
           "when": "view == commitGraph.view",
           "group": "worktrees@1"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "commitGraph.showFileHistory",
+          "when": "resourceScheme == file",
+          "group": "7_commitGraph@1"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "commitGraph.showFileHistory",
+          "when": "resourceScheme == file",
+          "group": "7_commitGraph@1"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "commitGraph.showFileHistory",
+          "when": "resourceScheme == file",
+          "group": "7_commitGraph@1"
+        },
+        {
+          "command": "commitGraph.showLineHistory",
+          "when": "resourceScheme == file",
+          "group": "7_commitGraph@2"
+        },
+        {
+          "command": "commitGraph.revealLineCommit",
+          "when": "resourceScheme == file",
+          "group": "7_commitGraph@3"
         }
       ]
     },

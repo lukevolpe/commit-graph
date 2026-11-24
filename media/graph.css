@@ -660,3 +660,9 @@ button.file {
 .drag-ghost .codicon { font-size: 12px; }
 #rows .row.drop-target { background: var(--vscode-list-dropBackground); box-shadow: inset 0 0 0 1px var(--vscode-focusBorder); }
 #rows .ref.drop-target { background: var(--vscode-list-dropBackground); outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+
+/* ---- file history ------------------------------------------------------------ */
+
+/* The file whose history is shown, in a commit's file list. */
+.d-files li.history-file { background: var(--vscode-list-inactiveSelectionBackground); }
+.d-files li.history-file .fname { font-weight: 600; }
