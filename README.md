@@ -13,7 +13,7 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - **Right-click a label**: switch to it, merge, rebase onto it, rename, delete, copy name
 - **Sync**: ↓ pull and ↑ push counts in the toolbar (hover to preview the commits; Publish when a branch has no upstream); unpushed ↑ and unpulled ↓ commits marked in the Commit column; branch labels show ↓1↑2 or ⚠ when the upstream was deleted
 - **Highlight a branch**: hover a label to light its line down to where it forked from your branch; right-click → Highlight Branch Line (or select a commit and press L) to pin it; Esc or the chip clears it
-- **Search** (Ctrl+F): message, author, email or SHA, across all history; Enter / Shift+Enter or F3 step through matches
+- **Search** (Ctrl+F): message, author, email or SHA, across all history; non-matches dim in place; Enter / Shift+Enter or F3 step through matches. Terms combine (all must match): `author:ada` or `author:"Ada L"`, `message:fix`, `file:src/git.ts` or `file:*.css`, `after:2026-01-01` / `before:2026-06-01` / `after:2w`, `type:merge` / `type:nonmerge`, `#abc123` or `sha:abc123`
 - **Scrollbar markers**: like the editor's overview ruler: HEAD, selection, branch tips, uncommitted changes, unpushed ↑ / unpulled ↓ commits, search matches and the highlighted branch line, drawn under the scrollbar
 - **Scope**: all branches, or the current branch only
 - **Live**: refreshes on commits, checkouts, fetches and file saves; history loads 500 commits at a time
@@ -36,6 +36,7 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 
 - `src/git.ts`: every git call and parser
 - `src/lanes.ts`: lane layout algorithm (pure, unit tested)
+- `src/search.ts`: search query parser (pure, unit tested)
 - `src/controller.ts`: drives one graph webview: paging, live refresh, search, details, diffs
 - `src/hosts.ts`: editor tab and panel/sidebar view hosts
 - `src/repos.ts`: picks which repository to show

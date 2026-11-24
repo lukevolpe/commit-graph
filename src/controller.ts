@@ -9,6 +9,7 @@ import {
   SyncState,
   getChanges,
   getDetails,
+  getFileMatches,
   getHead,
   getLog,
   getSearchIndex,
@@ -20,6 +21,7 @@ import {
 } from './git';
 import { GraphLayout, GraphRow } from './lanes';
 import { revisionUri } from './content';
+import { SEARCH_HELP, parseQuery } from './search';
 
 const PAGE = 500;
 /** Hash used for the uncommitted-changes row. */
@@ -75,6 +77,8 @@ export class GraphController {
   private done = false;
   private scope: Scope;
   private searchIndex: Promise<SearchEntry[]> | undefined;
+  /** `file:` pattern → matching commits; dropped with the search index. */
+  private fileMatches = new Map<string, Promise<Set<string>>>();
   private lastQuery = '';
   private detailsSeq = 0;
   private compareSeq = 0;
@@ -272,6 +276,7 @@ export class GraphController {
   private async reload(keep: boolean): Promise<void> {
     const count = keep ? Math.max(PAGE, this.commits.length) : PAGE;
     this.searchIndex = undefined;
+    this.fileMatches.clear();
     this.head = await getHead(this.repo);
     this.wipCount = this.head ? (await getWorkingChanges(this.repo)).length : 0;
     // Sync markers are a nicety: never let them break loading the graph.
@@ -456,12 +461,29 @@ export class GraphController {
     }
     this.searchIndex ??= getSearchIndex(this.repo, this.scope);
     try {
-      const hashes = search(await this.searchIndex, query);
-      if (query === this.lastQuery) this.post({ type: 'search', query, hashes });
+      const q = parseQuery(query);
+      const files = q.files.length ? await this.matchFiles(q.files) : undefined;
+      const hashes = search(await this.searchIndex, q, files);
+      // terms: what the webview highlights in subjects.
+      if (query === this.lastQuery) this.post({ type: 'search', query, hashes, terms: [...q.text, ...q.message] });
     } catch (e) {
       this.searchIndex = undefined;
+      this.fileMatches.clear();
       this.post({ type: 'error', message: errorText(e) });
     }
+  }
+
+  /** Commits touching every pattern (AND). */
+  private async matchFiles(patterns: string[]): Promise<Set<string>> {
+    const sets = await Promise.all(
+      patterns.map((p) => {
+        let m = this.fileMatches.get(p);
+        if (!m) this.fileMatches.set(p, (m = getFileMatches(this.repo, this.scope, p)));
+        return m;
+      }),
+    );
+    const [first, ...rest] = sets;
+    return new Set([...first].filter((h) => rest.every((s) => s.has(h))));
   }
 
   // ---- html ----------------------------------------------------------------
@@ -490,7 +512,7 @@ export class GraphController {
   <header class="toolbar">
     <div class="search" id="search-box">
       <i class="codicon codicon-search"></i>
-      <input id="search" type="text" placeholder="Search message, author or SHA" spellcheck="false" aria-label="Search commits">
+      <input id="search" type="text" placeholder="Search… (author: file: after:)" title="${SEARCH_HELP.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}" spellcheck="false" aria-label="Search commits">
       <span class="count" id="search-count"></span>
       <button class="icon" id="search-prev" title="Previous match (Shift+Enter)" aria-label="Previous match"><i class="codicon codicon-arrow-up"></i></button>
       <button class="icon" id="search-next" title="Next match (Enter)" aria-label="Next match"><i class="codicon codicon-arrow-down"></i></button>
