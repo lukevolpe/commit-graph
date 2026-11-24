@@ -152,6 +152,9 @@
         searchInput.focus();
         searchInput.select();
         break;
+      case 'committed':
+        clearDraft();
+        break;
       case 'busy':
         state.busy += m.busy ? 1 : -1;
         progress.classList.toggle('active', state.busy > 0);
@@ -577,6 +580,7 @@ ${author}
       return;
     }
     const row = state.rows[state.index.get(d.hash)];
+    if (d.wip && d.status) return renderCommitPanel(d);
     if (d.wip) {
       detailsEl.innerHTML = `${closeBtn()}
 <div class="d-head">
@@ -794,6 +798,231 @@ ${filesHtml(d)}`;
     true,
   );
 
+  // ---- commit panel (uncommitted row) -------------------------------------------
+  // Staged / Unstaged lists with stage, unstage, discard and open actions, plus a commit box.
+  // Status refreshes replace only the lists, so a half-typed message keeps its text and focus.
+
+  const SUMMARY_HINT = 72;
+  state.draft = saved.draft || { summary: '', body: '', amend: false };
+
+  function cpFiles(sec) {
+    const s = state.details && state.details.status;
+    return s ? (sec === 'staged' ? s.staged : s.unstaged) : [];
+  }
+
+  function renderCommitPanel(d) {
+    if (!$('cp-summary')) {
+      detailsEl.innerHTML = `${closeBtn()}
+<div class="d-head">
+  <h2 class="d-subject">Uncommitted changes</h2>
+  <div class="d-meta" id="cp-meta"></div>
+</div>
+<div class="cp">
+  <div id="cp-lists"></div>
+  <div class="cp-box">
+    <div class="cp-summary">
+      <input id="cp-summary" type="text" placeholder="Summary" aria-label="Commit summary">
+      <span class="cp-count" id="cp-count"></span>
+    </div>
+    <textarea id="cp-body" rows="3" placeholder="Description (optional)" aria-label="Commit description"></textarea>
+    <div class="cp-actions">
+      <label class="cp-amend" title="Replace the last commit (prefills its message)"><input type="checkbox" id="cp-amend">Amend</label>
+      <span class="cp-grow"></span>
+      <button class="cp-commit" id="cp-commit" data-cp="commit"></button>
+    </div>
+  </div>
+</div>`;
+      syncDraftInputs();
+    }
+    $('cp-meta').innerHTML = state.head ? `On HEAD <code>${state.head.slice(0, 7)}</code>` : 'No commits yet';
+    const focus = cpFocused();
+    $('cp-lists').innerHTML = cpSection('staged', d.status.staged) + cpSection('unstaged', d.status.unstaged);
+    restoreCpFocus(focus);
+    updateCommitBox();
+  }
+
+  function cpSection(sec, files) {
+    const staged = sec === 'staged';
+    const label = staged ? 'Unstage All' : 'Stage All';
+    const act = files.length
+      ? `<button class="icon" data-cp="${staged ? 'unstageAll' : 'stageAll'}" title="${label}" aria-label="${label}"><i class="codicon codicon-${staged ? 'remove' : 'add'}"></i></button>`
+      : '';
+    const items = files.length
+      ? files.map((f, i) => cpFileHtml(sec, f, i)).join('')
+      : `<li class="cp-empty muted">${staged ? 'Nothing staged' : 'No changes'}</li>`;
+    return `<div class="d-files cp-sec">
+  <div class="d-files-head"><strong>${staged ? 'Staged' : 'Unstaged'}</strong><span class="cp-n">${files.length}</span><span class="cp-grow"></span>${act}</div>
+  <ul>${items}</ul>
+</div>`;
+  }
+
+  function cpFileHtml(sec, f, i) {
+    const slash = f.path.lastIndexOf('/');
+    const name = f.path.slice(slash + 1);
+    const dir = slash >= 0 ? f.path.slice(0, slash) : '';
+    const stat = f.untracked
+      ? '<span class="muted">untracked</span>'
+      : f.status === 'U'
+        ? '<span class="muted">conflict</span>'
+        : f.added === null || f.added === undefined
+          ? ''
+          : `<span class="add">+${f.added}</span><span class="del">−${f.deleted}</span>`;
+    const ref = `data-sec="${sec}" data-i="${i}"`;
+    const btn = (act, icon, label) =>
+      `<button class="icon cp-act" data-cp="${act}" ${ref} title="${label}" aria-label="${label}: ${esc(name)}"><i class="codicon codicon-${icon}"></i></button>`;
+    // Fixed slots so stats line up whichever actions a row has.
+    const gap = '<span class="cp-gap"></span>';
+    let acts = f.status !== 'D' ? btn('open', 'go-to-file', 'Open File') : gap;
+    if (sec === 'unstaged') acts += f.status !== 'U' ? btn('discard', 'discard', f.untracked ? 'Delete File' : 'Discard Changes') : gap;
+    acts += sec === 'staged' ? btn('unstage', 'remove', 'Unstage') : btn('stage', 'add', f.status === 'U' ? 'Stage (mark resolved)' : 'Stage');
+    const tip = (f.oldPath ? `Renamed from ${f.oldPath}\n` : '') + (sec === 'staged' ? 'HEAD ↔ Index' : f.untracked ? 'Untracked' : 'Index ↔ Working Tree');
+    return `<li>
+  <button class="file cp-file" data-cp="diff" ${ref} title="${esc(tip)}">
+    <span class="st st-${f.status}" title="${statusName(f.status)}">${f.status}</span>
+    <span class="fname">${esc(name)}</span>
+    <span class="fdir">${esc(dir)}</span>
+    <span class="fstat">${stat}</span>
+  </button>${acts}
+</li>`;
+  }
+
+  function cpAction(act, sec, i) {
+    const s = state.details.status;
+    const f = sec ? cpFiles(sec)[i] : null;
+    if (sec && !f) return;
+    if (act === 'diff') post('openStatusDiff', { file: f, staged: sec === 'staged' });
+    else if (act === 'open') post('openFile', { path: f.path });
+    else if (act === 'stage' || act === 'unstage' || act === 'discard') post(act, { files: [f] });
+    else if (act === 'stageAll' && s.unstaged.length) post('stage', { files: s.unstaged });
+    else if (act === 'unstageAll' && s.staged.length) post('unstage', { files: s.staged });
+    else if (act === 'commit') commitNow();
+  }
+
+  function commitMessage() {
+    const s = state.draft.summary.trim();
+    const b = state.draft.body.trim();
+    return s ? (b ? `${s}\n\n${b}` : s) : '';
+  }
+
+  function canCommit() {
+    const s = state.details && state.details.status;
+    if (!s || !commitMessage()) return false;
+    return state.draft.amend || s.staged.length > 0 || s.unstaged.some((f) => !f.untracked && f.status !== 'U');
+  }
+
+  function commitNow() {
+    if (canCommit()) post('commit', { message: commitMessage(), amend: state.draft.amend });
+  }
+
+  function updateCommitBox() {
+    const s = state.details.status;
+    const all = !state.draft.amend && !s.staged.length;
+    const btn = /** @type {HTMLButtonElement} */ ($('cp-commit'));
+    btn.textContent = state.draft.amend ? 'Amend Commit' : all ? 'Commit All' : 'Commit';
+    btn.title = `${state.draft.amend ? 'Replace the last commit' : all ? 'Stage all tracked changes and commit' : 'Commit staged changes'} (Ctrl+Enter)`;
+    btn.disabled = !canCommit();
+    const n = state.draft.summary.length;
+    const count = $('cp-count');
+    count.textContent = n ? String(SUMMARY_HINT - n) : '';
+    count.classList.toggle('over', n > SUMMARY_HINT);
+    count.title = `Characters left of ${SUMMARY_HINT} (a soft limit for the summary line)`;
+    /** @type {HTMLInputElement} */ ($('cp-amend')).disabled = !state.head;
+  }
+
+  function syncDraftInputs() {
+    /** @type {HTMLInputElement} */ ($('cp-summary')).value = state.draft.summary;
+    /** @type {HTMLTextAreaElement} */ ($('cp-body')).value = state.draft.body;
+    /** @type {HTMLInputElement} */ ($('cp-amend')).checked = state.draft.amend;
+  }
+
+  /** Amend prefills the last message into an empty box, and takes it back out if left unedited. */
+  function setAmend(on) {
+    const [lastSummary, ...rest] = ((state.details && state.details.lastMessage) || '').split('\n');
+    const lastBody = rest.join('\n').trim();
+    const d = state.draft;
+    if (on && !d.summary.trim() && !d.body.trim()) {
+      d.summary = lastSummary;
+      d.body = lastBody;
+    } else if (!on && d.summary === lastSummary && d.body === lastBody) {
+      d.summary = '';
+      d.body = '';
+    }
+    d.amend = on;
+    syncDraftInputs();
+    persist();
+    updateCommitBox();
+  }
+
+  function clearDraft() {
+    state.draft = { summary: '', body: '', amend: false };
+    persist();
+    if ($('cp-summary') && state.details && state.details.status) {
+      syncDraftInputs();
+      updateCommitBox();
+    }
+  }
+
+  function cpFocused() {
+    const a = /** @type {HTMLElement} */ (document.activeElement);
+    return a && a.classList.contains('cp-file') ? { sec: a.dataset.sec, i: Number(a.dataset.i) } : null;
+  }
+
+  /** After a refresh, keeps keyboard focus at the same spot in the same list (or the other list if it emptied). */
+  function restoreCpFocus(f) {
+    if (!f) return;
+    const list = (sec) => [...detailsEl.querySelectorAll(`.cp-file[data-sec="${sec}"]`)];
+    let items = list(f.sec);
+    if (!items.length) items = list(f.sec === 'staged' ? 'unstaged' : 'staged');
+    const el = /** @type {HTMLElement} */ (items[Math.min(f.i, items.length - 1)]);
+    if (el) el.focus();
+  }
+
+  // Capture phase, ahead of the commit-details click handler.
+  detailsEl.addEventListener(
+    'click',
+    (e) => {
+      const t = /** @type {HTMLElement} */ (e.target).closest('[data-cp]');
+      if (!t || !state.details || !state.details.status) return;
+      e.stopPropagation();
+      cpAction(t.dataset.cp, t.dataset.sec, Number(t.dataset.i));
+    },
+    true,
+  );
+
+  detailsEl.addEventListener('input', (e) => {
+    const t = /** @type {HTMLInputElement} */ (e.target);
+    if (t.id === 'cp-summary') state.draft.summary = t.value;
+    else if (t.id === 'cp-body') state.draft.body = t.value;
+    else return;
+    persist();
+    updateCommitBox();
+  });
+
+  detailsEl.addEventListener('change', (e) => {
+    const t = /** @type {HTMLInputElement} */ (e.target);
+    if (t.id === 'cp-amend') setAmend(t.checked);
+  });
+
+  detailsEl.addEventListener('keydown', (e) => {
+    const t = /** @type {HTMLElement} */ (e.target);
+    const inBox = t.id === 'cp-summary' || t.id === 'cp-body';
+    if (inBox && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) commitNow();
+    else if (t.id === 'cp-summary' && e.key === 'Enter') $('cp-body').focus();
+    else if ((inBox || t.classList.contains('cp-file')) && e.key === 'Escape') scroller.focus();
+    else if (t.classList.contains('cp-file') && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      const items = [...detailsEl.querySelectorAll('.cp-file')];
+      const next = /** @type {HTMLElement} */ (items[items.indexOf(t) + (e.key === 'ArrowDown' ? 1 : -1)]);
+      if (next) next.focus();
+    } else if (t.classList.contains('cp-file') && e.key === ' ') {
+      cpAction(t.dataset.sec === 'staged' ? 'unstage' : 'stage', t.dataset.sec, Number(t.dataset.i));
+    } else return;
+    e.preventDefault();
+  });
+  // Space on a button clicks it on keyup; here Space stages, Enter opens the diff.
+  detailsEl.addEventListener('keyup', (e) => {
+    if (e.key === ' ' && /** @type {HTMLElement} */ (e.target).classList.contains('cp-file')) e.preventDefault();
+  });
+
   // ---- selection & navigation -------------------------------------------------
 
   function select(hash, opts = {}) {
@@ -967,7 +1196,7 @@ ${filesHtml(d)}`;
         e.preventDefault();
         e.stopPropagation();
         toggleHelp(false);
-      } else if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target instanceof HTMLInputElement)) {
+      } else if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement)) {
         e.preventDefault();
         toggleHelp(true);
       }
@@ -1148,6 +1377,7 @@ ${filesHtml(d)}`;
       detailsWidth: state.detailsWidth,
       detailsHeight: state.detailsHeight,
       pin: state.pin,
+      draft: state.draft,
     });
   }
 

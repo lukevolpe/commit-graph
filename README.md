@@ -14,6 +14,7 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - **Sync**: ↓ pull and ↑ push counts in the toolbar (hover to preview the commits; Publish when a branch has no upstream); unpushed ↑ and unpulled ↓ commits marked in the Commit column; branch labels show ↓1↑2 or ⚠ when the upstream was deleted
 - **Highlight a branch**: hover a label to light its line down to where it forked from your branch; right-click → Highlight Branch Line (or select a commit and press L) to pin it; Esc or the chip clears it
 - **Stashes**: each stash shows as a row just above the commit it was made on, with a hollow square and a muted `stash@{n}` label; click for its message and files (untracked too), right-click to apply, pop or drop. Stashes on commits hidden by scope or not loaded yet stay hidden until their base is shown
+- **Commit panel**: select the uncommitted-changes row for Staged and Unstaged lists (untracked and conflicted files included) with stage / unstage, discard and open-file buttons, Stage All / Unstage All, and a commit box: summary with a 72-character hint, optional description, Amend (prefills the last message), Ctrl+Enter to commit. With nothing staged the button reads Commit All and asks once before staging tracked changes. Click a file for its diff (staged: HEAD ↔ index; unstaged: index ↔ working tree); in the lists ↑ ↓ move, Space stages or unstages, Enter opens the diff, Esc returns to the graph
 - **Search** (Ctrl+F): message, author, email or SHA, across all history; non-matches dim in place; Enter / Shift+Enter or F3 step through matches. Terms combine (all must match): `author:ada` or `author:"Ada L"`, `message:fix`, `file:src/git.ts` or `file:*.css`, `after:2026-01-01` / `before:2026-06-01` / `after:2w`, `type:merge` / `type:nonmerge`, `#abc123` or `sha:abc123`
 - **Scrollbar markers**: like the editor's overview ruler: HEAD, selection, branch tips, uncommitted changes, unpushed ↑ / unpulled ↓ commits, search matches and the highlighted branch line, drawn under the scrollbar
 - **Scope**: all branches, or the current branch only
@@ -42,5 +43,5 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - `src/hosts.ts`: editor tab and panel/sidebar view hosts
 - `src/repos.ts`: picks which repository to show
 - `src/actions.ts`: right-click menu actions
-- `src/content.ts`: read-only "file at revision" documents for diffs
+- `src/content.ts`: read-only "file at revision" documents for diffs (also the staged/index version)
 - `media/graph.js`, `media/graph.css`: webview UI

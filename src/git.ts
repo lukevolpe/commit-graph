@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import { rm } from 'node:fs/promises';
+import { resolve, sep } from 'node:path';
 import { ParsedQuery, filePathspecs, isEmptyQuery, parseQuery } from './search';
 
 export type RefKind = 'head' | 'branch' | 'remote' | 'tag';
@@ -498,4 +500,97 @@ export async function getStashDetails(cwd: string, hash: string): Promise<Commit
     ? (await getChanges(cwd, EMPTY_TREE, untrackedCommit)).map((f) => ({ ...f, untracked: true }))
     : [];
   return { ...d, parents: d.parents.slice(0, 1), files: [...d.files, ...untracked] };
+}
+
+// ---- staging & committing (commit panel) -------------------------------------------
+
+/** Working tree state split like the Source Control view. Untracked and conflicted files are unstaged. */
+export interface WorkingStatus {
+  staged: FileChange[];
+  unstaged: FileChange[];
+}
+
+export async function getStatus(cwd: string): Promise<WorkingStatus> {
+  const diff = (...args: string[]) =>
+    git(cwd, ['diff', ...args, '--numstat', '-z', '--no-color', '--no-ext-diff', '--']).catch(() => '');
+  const [out, cached, worktree] = await Promise.all([
+    git(cwd, ['status', '--porcelain=v2', '-z', '--untracked-files=all']),
+    diff('--cached', '-M'),
+    diff(),
+  ]);
+  const s = parseStatus(out);
+  const counts = (fs: FileChange[], nums: ReturnType<typeof parseNumstat>) =>
+    fs.map((f) => (f.untracked ? f : { ...f, ...(nums.get(f.path) ?? {}) }));
+  return { staged: counts(s.staged, parseNumstat(cached)), unstaged: counts(s.unstaged, parseNumstat(worktree)) };
+}
+
+/** Stages paths as they are in the working tree, deletions and untracked files included. */
+export async function stage(cwd: string, paths: string[]): Promise<void> {
+  if (paths.length) await git(cwd, ['add', '-A', '--', ...paths]);
+}
+
+/** Moves staged paths back to unstaged. Pass both sides of a rename. */
+export async function unstage(cwd: string, paths: string[]): Promise<void> {
+  if (!paths.length) return;
+  if (await getHead(cwd)) await git(cwd, ['reset', '-q', '--', ...paths]);
+  else await git(cwd, ['rm', '-q', '-r', '--cached', '--', ...paths]); // nothing to reset to yet
+}
+
+/** Throws away unstaged changes: tracked files go back to their staged (index) state, untracked files are deleted. */
+export async function discard(cwd: string, files: FileChange[]): Promise<void> {
+  const tracked = files.filter((f) => !f.untracked).map((f) => f.path);
+  if (tracked.length) await git(cwd, ['checkout', '-q', '--', ...tracked]);
+  for (const f of files.filter((f) => f.untracked)) {
+    const abs = resolve(cwd, f.path);
+    if (!abs.startsWith(resolve(cwd) + sep)) throw new Error(`Refusing to delete ${f.path}: outside the repository`);
+    await rm(abs, { force: true });
+  }
+}
+
+/** Commits the index; `all` also stages every tracked change first (`commit -a`). */
+export async function commit(cwd: string, message: string, opts: { amend?: boolean; all?: boolean } = {}): Promise<void> {
+  const args = ['commit', '-q', '-m', message];
+  if (opts.all) args.push('-a');
+  if (opts.amend) args.push('--amend');
+  await git(cwd, args);
+}
+
+/** HEAD's full message (for amending), or '' before the first commit. */
+export async function lastMessage(cwd: string): Promise<string> {
+  if (!(await getHead(cwd))) return '';
+  return (await git(cwd, ['log', '-1', '--format=%B', 'HEAD'])).trimEnd();
+}
+
+/** Parses `git status --porcelain=v2 -z`. Line counts are left null (see getStatus). */
+export function parseStatus(out: string): WorkingStatus {
+  const t = out.split('\0');
+  const staged: FileChange[] = [];
+  const unstaged: FileChange[] = [];
+  const file = (status: FileStatus, path: string, oldPath?: string): FileChange => ({
+    status,
+    path,
+    ...(oldPath ? { oldPath } : {}),
+    added: null,
+    deleted: null,
+  });
+  // Fields before the path: ordinary 8, rename/copy 9, unmerged 10.
+  const rest = (line: string, n: number) => line.split(' ').slice(n).join(' ');
+  for (let i = 0; i < t.length; i++) {
+    const line = t[i];
+    if (!line) continue;
+    const kind = line[0];
+    if (kind === '?') {
+      unstaged.push({ ...file('A', line.slice(2)), untracked: true });
+    } else if (kind === 'u') {
+      unstaged.push(file('U', rest(line, 10)));
+    } else if (kind === '1' || kind === '2') {
+      const [x, y] = line.slice(2, 4);
+      const path = rest(line, kind === '1' ? 8 : 9);
+      const oldPath = kind === '2' ? t[++i] : undefined;
+      const side = (c: string) => file(c as FileStatus, path, c === 'R' || c === 'C' ? oldPath : undefined);
+      if (x !== '.') staged.push(side(x));
+      if (y !== '.') unstaged.push(side(y));
+    }
+  }
+  return { staged, unstaged };
 }

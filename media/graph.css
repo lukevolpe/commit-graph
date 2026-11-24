@@ -628,3 +628,61 @@ button.file {
 .d-cmp-subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .d-cmp-arrow { color: var(--muted); font-size: 12px; margin-left: 18px; justify-self: start; }
 .d-cmp-hint { font-size: 0.92em; }
+
+/* ---- commit panel (uncommitted row) ------------------------------------------ */
+
+.cp-grow { flex: 1; }
+.cp-n { color: var(--muted); font-size: 0.92em; }
+.cp-sec .d-files-head { padding-top: 4px; padding-bottom: 4px; min-height: 31px; }
+.cp-sec li .cp-act { visibility: hidden; flex-shrink: 0; }
+.cp-sec li:hover .cp-act, .cp-sec li:focus-within .cp-act { visibility: visible; }
+.cp-sec li:focus-within { background: var(--vscode-list-inactiveSelectionBackground); }
+.cp-sec .cp-empty { padding: 4px 16px 6px; font-size: 0.92em; }
+.cp-gap { width: 24px; flex-shrink: 0; }
+
+.cp-box {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px 12px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--vscode-sideBar-background, var(--bg));
+}
+.cp-summary { position: relative; display: flex; }
+.cp-box input[type='text'], .cp-box textarea {
+  width: 100%;
+  font: inherit;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 2px;
+  padding: 4px 6px;
+}
+.cp-box .cp-summary input { padding-right: 36px; }
+.cp-box textarea { resize: vertical; min-height: 44px; }
+.cp-box input::placeholder, .cp-box textarea::placeholder { color: var(--vscode-input-placeholderForeground); }
+.cp-box input:focus, .cp-box textarea:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.cp-count {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  font-size: 0.85em;
+  font-family: var(--vscode-editor-font-family);
+  pointer-events: none;
+}
+.cp-count.over { color: var(--vscode-editorWarning-foreground, var(--vscode-charts-yellow)); }
+.cp-actions { display: flex; align-items: center; gap: 8px; }
+.cp-amend { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; color: var(--muted); }
+.cp-amend input { margin: 0; accent-color: var(--vscode-checkbox-background, var(--vscode-focusBorder)); }
+button.cp-commit {
+  padding: 4px 14px;
+  border-radius: 2px;
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+button.cp-commit:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); }
+button.cp-commit:disabled { opacity: 0.5; cursor: default; }
