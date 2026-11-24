@@ -6,7 +6,18 @@ import { GraphController, WIP, errorText } from './controller';
 import { revisionUri } from './content';
 import * as path from 'node:path';
 import { dropChoices } from './drop';
-import { Remote, defaultBranch, getRemotes, isNonFastForward, pruneRemote, pullRequestUrl, splitRemoteRef } from './remotes';
+import {
+  Remote,
+  defaultBranch,
+  getRemotes,
+  hasPrTemplate,
+  isNonFastForward,
+  prCommits,
+  prDraft,
+  pruneRemote,
+  pullRequestUrl,
+  splitRemoteRef,
+} from './remotes';
 import { StashPushOptions, gitAtLeast, stashPushArgs } from './git';
 import { planUndo } from './undo';
 import { readdirSync } from 'node:fs';
@@ -365,7 +376,11 @@ const handlers: Record<string, Handler> = {
     if (target === branch) {
       return vscode.window.showInformationMessage(`${branch} is ${remote}'s default branch; pick another branch to compare.`);
     }
-    const link = pullRequestUrl(url, branch, target);
+    const baseRef = `${remote}/${target}`;
+    const commits = await prCommits(repo, baseRef, refKind === 'remote' ? refName! : `${remote}/${branch}`).catch(() => []);
+    const draft = prDraft(branch, commits);
+    if (draft.body && (await hasPrTemplate(repo, baseRef))) draft.body = undefined;
+    const link = pullRequestUrl(url, branch, target, draft);
     if (!link) {
       return vscode.window.showWarningMessage(`Can't open a pull request page for ${url}: only GitHub, GitLab and Bitbucket are known.`);
     }

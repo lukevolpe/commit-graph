@@ -4,7 +4,17 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { git } from '../src/git';
-import { defaultBranch, getRemotes, isNonFastForward, pruneRemote, pullRequestUrl, splitRemoteRef } from '../src/remotes';
+import {
+  defaultBranch,
+  getRemotes,
+  hasPrTemplate,
+  isNonFastForward,
+  prCommits,
+  prDraft,
+  pruneRemote,
+  pullRequestUrl,
+  splitRemoteRef,
+} from '../src/remotes';
 
 test('pullRequestUrl builds GitHub, GitLab and Bitbucket compare pages', () => {
   assert.equal(
@@ -21,6 +31,82 @@ test('pullRequestUrl builds GitHub, GitLab and Bitbucket compare pages', () => {
   );
   assert.equal(pullRequestUrl('https://git.example.com/o/r.git', 'a', 'main'), undefined);
   assert.equal(pullRequestUrl('/srv/repos/r.git', 'a', 'main'), undefined);
+});
+
+test('pullRequestUrl fills in title and description where the host supports it', () => {
+  const d = { title: 'Add search & more', body: '- one\n- two' };
+  assert.equal(
+    pullRequestUrl('git@github.com:o/r.git', 'feat/a', 'main', d),
+    'https://github.com/o/r/compare/main...feat/a?expand=1&title=Add%20search%20%26%20more&body=-%20one%0A-%20two',
+  );
+  assert.equal(
+    pullRequestUrl('https://gitlab.com/g/r.git', 'feat/a', 'main', d),
+    'https://gitlab.com/g/r/-/merge_requests/new?merge_request%5Bsource_branch%5D=feat%2Fa&merge_request%5Btarget_branch%5D=main' +
+      '&merge_request%5Btitle%5D=Add%20search%20%26%20more&merge_request%5Bdescription%5D=-%20one%0A-%20two',
+  );
+  // No body: only the title is sent, so the host's template stays.
+  assert.equal(
+    pullRequestUrl('git@github.com:o/r.git', 'a', 'main', { title: 'T' }),
+    'https://github.com/o/r/compare/main...a?expand=1&title=T',
+  );
+  // Bitbucket has no prefill: the plain page.
+  assert.equal(
+    pullRequestUrl('https://bitbucket.org/o/r.git', 'a', 'main', d),
+    'https://bitbucket.org/o/r/pull-requests/new?source=a&dest=main',
+  );
+});
+
+test('prDraft: one commit gives its subject and body', () => {
+  assert.deepEqual(prDraft('feat/x', [{ subject: 'Fix login timeout', body: 'Raise it to 30s.\n' }]), {
+    title: 'Fix login timeout',
+    body: 'Raise it to 30s.',
+  });
+  assert.deepEqual(prDraft('feat/x', [{ subject: 'Fix', body: '' }]), { title: 'Fix', body: undefined });
+});
+
+test('prDraft: several commits give a title from the branch and a commit list', () => {
+  const commits = [
+    { subject: 'Add search', body: 'x' },
+    { subject: 'Search takes query', body: '' },
+  ];
+  assert.deepEqual(prDraft('feature/add-search_box', commits), {
+    title: 'Add search box',
+    body: '- Add search\n- Search takes query',
+  });
+  const many = Array.from({ length: 40 }, (_, i) => ({ subject: `c${i}`, body: '' }));
+  const body = prDraft('b', many).body!;
+  assert.equal(body.split('\n').length, 31);
+  assert.ok(body.endsWith('- …and 10 more'));
+  assert.deepEqual(prDraft('b', []), { title: 'B' });
+});
+
+test('prCommits lists commits on the branch but not the base, oldest first; hasPrTemplate looks in the base', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cg-pr-'));
+  try {
+    const g = (...a: string[]) => git(dir, a);
+    await g('init', '-q', '-b', 'main');
+    await g('config', 'user.email', 't@t');
+    await g('config', 'user.name', 't');
+    await g('commit', '-q', '--allow-empty', '-m', 'base');
+    assert.equal(await hasPrTemplate(dir, 'main'), false);
+    await g('switch', '-q', '-c', 'feat');
+    await g('commit', '-q', '--allow-empty', '-m', 'first', '-m', 'details');
+    await g('commit', '-q', '--allow-empty', '-m', 'second');
+    assert.deepEqual(await prCommits(dir, 'main', 'feat'), [
+      { subject: 'first', body: 'details' },
+      { subject: 'second', body: '' },
+    ]);
+    await g('switch', '-q', 'main');
+    const { mkdirSync, writeFileSync } = await import('node:fs');
+    mkdirSync(join(dir, '.github'));
+    writeFileSync(join(dir, '.github', 'PULL_REQUEST_TEMPLATE.md'), '## Why\n');
+    await g('add', '.');
+    await g('commit', '-q', '-m', 'template');
+    assert.equal(await hasPrTemplate(dir, 'main'), true);
+    assert.equal(await hasPrTemplate(dir, 'feat'), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('splitRemoteRef finds the remote by longest name prefix', () => {
