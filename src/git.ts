@@ -432,3 +432,70 @@ export function remoteWebBase(remoteUrl: string): string | undefined {
   if (scp) return `https://${scp[1]}/${scp[2]}`;
   return undefined;
 }
+
+// ---- stashes ---------------------------------------------------------------------
+
+/** A stash entry drawn as a row. `parents` holds only the base commit. */
+export interface Stash extends Commit {
+  /** Reflog selector, e.g. `stash@{0}`. Shifts as stashes come and go: resolve by hash before acting. */
+  stash: string;
+}
+
+const STASH_FORMAT = ['%H', '%P', '%an', '%ae', '%at', '%gd', '%s'].join('%x1f') + '%x1e';
+
+/** Newest first. Empty when there are no stashes. */
+export async function getStashes(cwd: string): Promise<Stash[]> {
+  return parseStashes(await git(cwd, ['stash', 'list', `--format=${STASH_FORMAT}`]));
+}
+
+export function parseStashes(out: string): Stash[] {
+  return out
+    .split(RECORD)
+    .map((r) => r.replace(/^\n/, ''))
+    .filter(Boolean)
+    .map((r) => {
+      const [hash, parents, author, email, date, selector, subject] = r.split(FIELD);
+      // 2nd/3rd parents hold the index and untracked files: not part of the graph.
+      const base = splitParents(parents)[0];
+      return {
+        hash,
+        parents: base ? [base] : [],
+        author,
+        email,
+        date: Number(date),
+        refs: [],
+        // "On main: my message" → "my message". "WIP on main: abc123 subject" stays as is.
+        subject: (subject ?? '').replace(/^On [^:]+: /, ''),
+        stash: selector,
+      };
+    });
+}
+
+/**
+ * Puts each stash directly above its base commit (newest stash on top). Stashes whose base
+ * isn't in `commits` are left out: they belong to a later page, or are out of scope.
+ */
+export function insertStashes<T extends { hash: string }>(commits: T[], stashes: Stash[]): (T | Stash)[] {
+  if (!stashes.length) return commits;
+  const byBase = new Map<string, Stash[]>();
+  for (const s of stashes) {
+    const b = s.parents[0];
+    if (b) byBase.set(b, [...(byBase.get(b) ?? []), s]);
+  }
+  return commits.flatMap((c) => [...(byBase.get(c.hash) ?? []), c]);
+}
+
+/** Current `stash@{n}` for a stash commit, or null if it's gone. */
+export async function stashSelector(cwd: string, hash: string): Promise<string | null> {
+  return (await getStashes(cwd)).find((s) => s.hash === hash)?.stash ?? null;
+}
+
+/** Stash details: changes against its base, plus untracked files if it saved any. */
+export async function getStashDetails(cwd: string, hash: string): Promise<CommitDetails> {
+  const d = await getDetails(cwd, hash);
+  const untrackedCommit = d.parents[2];
+  const untracked = untrackedCommit
+    ? (await getChanges(cwd, EMPTY_TREE, untrackedCommit)).map((f) => ({ ...f, untracked: true }))
+    : [];
+  return { ...d, parents: d.parents.slice(0, 1), files: [...d.files, ...untracked] };
+}

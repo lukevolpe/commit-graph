@@ -11,14 +11,18 @@ import {
   getHead,
   getLog,
   getSearchIndex,
+  getStashDetails,
+  getStashes,
   getSync,
   getWorkingChanges,
   git,
+  insertStashes,
   parseNameStatus,
   parseNumstat,
   parseRefs,
   parseTrack,
   search,
+  stashSelector,
 } from '../src/git';
 import { GraphLayout } from '../src/lanes';
 import { parseQuery } from '../src/search';
@@ -282,5 +286,46 @@ test('file search: paths, globs, directories, scope', async () => {
     assert.deepEqual(await subj('type:merge'), ['merge side']);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('stashes: listed with their base, placed above it, details include untracked files', async () => {
+  assert.deepEqual(await getStashes(dir), []);
+  const head = (await getHead(dir))!;
+  appendFileSync(join(dir, 'readme.md'), 'stashed\n');
+  await g('stash', 'push', '-q', '-m', 'first');
+  appendFileSync(join(dir, 'readme.md'), 'again\n');
+  writeFileSync(join(dir, 'loose.txt'), 'u\n');
+  await g('stash', 'push', '-q', '-u');
+  try {
+    const stashes = await getStashes(dir);
+    assert.deepEqual(stashes.map((s) => s.stash), ['stash@{0}', 'stash@{1}']);
+    assert.deepEqual(stashes.map((s) => s.parents), [[head], [head]]);
+    assert.match(stashes[0].subject, /^WIP on main: /);
+    assert.equal(stashes[1].subject, 'first');
+
+    // getLog itself never includes stashes.
+    const log = await getLog(dir, 'all', 0, 100);
+    assert.ok(!log.some((c) => stashes.some((s) => s.hash === c.hash)));
+    const rows = insertStashes(log, stashes);
+    assert.deepEqual(rows.slice(0, 3).map((r) => r.hash), [stashes[0].hash, stashes[1].hash, head]);
+    // Base on a later page: nothing inserted yet.
+    assert.deepEqual(insertStashes(log.slice(1), stashes).length, log.length - 1);
+    const graph = new GraphLayout().add(rows.map((r) => ('stash' in r ? { ...r, side: true } : r)));
+    assert.deepEqual(graph.slice(0, 3).map((r) => r.col), [1, 2, 0]);
+
+    const d = await getStashDetails(dir, stashes[0].hash);
+    assert.deepEqual(d.parents, [head]);
+    assert.deepEqual(
+      d.files.map((f) => `${f.status} ${f.path}${f.untracked ? ' (untracked)' : ''}`),
+      ['M readme.md', 'A loose.txt (untracked)'],
+    );
+
+    assert.equal(await stashSelector(dir, stashes[1].hash), 'stash@{1}');
+    await g('stash', 'drop', '-q', 'stash@{0}');
+    assert.equal(await stashSelector(dir, stashes[1].hash), 'stash@{0}');
+    assert.equal(await stashSelector(dir, stashes[0].hash), null);
+  } finally {
+    await g('stash', 'clear');
   }
 });

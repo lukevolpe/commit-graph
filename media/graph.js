@@ -185,7 +185,7 @@
     updateWidth();
     spacer.style.height = state.rows.length * ROW + 'px';
 
-    const commits = state.rows.length - (state.index.has(WIP) ? 1 : 0);
+    const commits = state.rows.filter((r) => !r.wip && !r.stash).length;
     status.textContent = `${commits.toLocaleString()}${state.done ? '' : '+'} commits`;
     if (!state.rows.length) showEmpty('No commits yet.');
     else emptyEl.hidden = true;
@@ -254,7 +254,7 @@
       if (l.kind === 'pass') d = `M${lx} 0V${ROW}`;
       else if (l.kind === 'in') d = lx === cx ? `M${lx} 0V${cy}` : `M${lx} 0C${lx} ${cy * 0.9} ${cx} ${cy * 0.4} ${cx} ${cy}`;
       else d = lx === cx ? `M${cx} ${cy}V${ROW}` : `M${cx} ${cy}C${cx} ${cy * 1.6} ${lx} ${cy * 1.1} ${lx} ${ROW}`;
-      const dashed = r.wip && l.kind === 'out' ? ' wip' : '';
+      const dashed = (r.wip || r.stash) && l.kind === 'out' ? ' wip' : '';
       const on =
         m && (l.kind === 'pass' ? m.pass.has(l.lane) : l.kind === 'out' ? l.lane === m.out : l.lane === m.inn);
       const hl = on ? ' hl' : '';
@@ -264,6 +264,7 @@
     const c = `c${g.color % COLORS}` + (m && m.node ? ' hl' : '');
     let node;
     if (r.wip) node = `<circle class="n wip ${c}" cx="${cx}" cy="${cy}" r="4.5"/>`;
+    else if (r.stash) node = `<rect class="n stash ${c}" x="${cx - 4}" y="${cy - 4}" width="8" height="8" rx="1.5"/>`;
     else if (r.hash === state.head) node = `<circle class="n ${c}" cx="${cx}" cy="${cy}" r="3.5"/><circle class="n ring ${c}" cx="${cx}" cy="${cy}" r="6.5"/>`;
     else if (r.parents.length > 1) node = `<circle class="n merge ${c}" cx="${cx}" cy="${cy}" r="3"/>`;
     else node = `<circle class="n ${c}" cx="${cx}" cy="${cy}" r="4"/>`;
@@ -276,13 +277,15 @@
     const dim = state.matches.length > 0 && !state.matchSet.has(r.hash);
     const off = !!f && !f.marks.get(i)?.node;
     const cmpRow = compareActive() && r.hash === state.cmp.other;
-    const cls = ['row', sel && 'selected', cmpRow && 'compare', dim && 'dim', off && 'off', r.hash === state.head && 'head', r.wip && 'wip-row']
+    const cls = ['row', sel && 'selected', cmpRow && 'compare', dim && 'dim', off && 'off', r.hash === state.head && 'head', r.wip && 'wip-row', r.stash && 'stash-row']
       .filter(Boolean)
       .join(' ');
     const pinned = focusInfo();
     const ctx = r.wip
       ? { webviewSection: 'wip', preventDefaultContextMenuItems: true }
-      : {
+      : r.stash
+        ? { webviewSection: 'stash', sha: r.hash, stashRef: r.stash, preventDefaultContextMenuItems: true }
+        : {
           webviewSection: 'commit',
           sha: r.hash,
           highlighted: !!pinned && !!pinned.marks.get(i)?.node,
@@ -295,10 +298,10 @@
       : `<div class="col-author" title="${esc(r.author)} &lt;${esc(r.email)}&gt;">${avatar(r.author, r.email)}<span>${esc(r.author)}</span></div>`;
     return `<div class="${cls}" data-i="${i}" role="option" aria-selected="${sel}" data-vscode-context='${attr(JSON.stringify(ctx))}'>
 <div class="col-graph">${graphSvg(r, i, f)}</div>
-<div class="col-msg">${badges(r.refs, color)}<span class="subject">${highlight(r.subject)}</span></div>
+<div class="col-msg">${r.stash ? stashBadge(r.stash) : badges(r.refs, color)}<span class="subject">${highlight(r.subject)}</span></div>
 ${author}
 <div class="col-date" title="${r.wip ? '' : fullDate(r.date)}">${r.wip ? '' : relDate(r.date)}</div>
-<div class="col-sha">${r.wip ? '<i class="codicon codicon-edit"></i>' : syncMark(r.hash) + r.hash.slice(0, 7)}</div>
+<div class="col-sha">${r.wip ? '<i class="codicon codicon-edit"></i>' : r.stash ? r.hash.slice(0, 7) : syncMark(r.hash) + r.hash.slice(0, 7)}</div>
 </div>`;
   }
 
@@ -357,6 +360,11 @@ ${author}
       tip += `\n${aheadBehind(t)} ${t.upstream}`;
     }
     return `<span class="ref ${r.kind}${r.current ? ' current' : ''} c${color}" title="${esc(tip)}" data-vscode-context='${attr(JSON.stringify(ctx))}'><i class="codicon codicon-${icon}"></i><span>${esc(r.name)}</span>${sync}</span>`;
+  }
+
+  /** Muted `stash@{n}` label. Not a ref: no ref menu, no lane hover. */
+  function stashBadge(name) {
+    return `<span class="refs"><span class="stash-ref" title="${esc(name)}"><i class="codicon codicon-archive"></i><span>${esc(name)}</span></span></span>`;
   }
 
   // ---- sync state (ahead / behind upstream) ---------------------------------------
@@ -602,6 +610,7 @@ ${filesHtml(d)}`;
     <dt>${d.parents.length > 1 ? 'Parents' : 'Parent'}</dt>
     <dd>${parents}</dd>
   </dl>
+  ${row && row.stash ? `<div class="d-refs">${stashBadge(row.stash)}</div>` : ''}
   ${row && row.refs.length ? `<div class="d-refs">${groupRefs(row.refs).map((r) => badge(r, row.graph.color % COLORS)).join('')}</div>` : ''}
 </div>
 ${body ? `<div class="d-body">${linkify(esc(body))}</div>` : ''}
