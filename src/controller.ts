@@ -50,6 +50,7 @@ type InMessage =
   | { type: 'push' }
   | { type: 'copy'; text: string; label: string }
   | { type: 'pickRef' }
+  | { type: 'dropRef'; refName: string; refKind: 'branch' | 'remote'; onto?: string; sha?: string }
   | { type: 'layout'; width: number; height: number };
 
 type Row = Commit & { graph: GraphRow; wip?: boolean; stash?: string };
@@ -267,6 +268,14 @@ export class GraphController {
       case 'copy':
         void vscode.env.clipboard.writeText(msg.text);
         void vscode.window.setStatusBarMessage(`$(check) Copied ${msg.label}`, 2000);
+        break;
+      case 'dropRef':
+        void vscode.commands.executeCommand('commitGraph.dropRef', {
+          refName: msg.refName,
+          refKind: msg.refKind,
+          onto: msg.onto,
+          sha: msg.sha,
+        });
         break;
       case 'pickRef':
         void this.pickRef().catch((e) => vscode.window.showErrorMessage(errorText(e)));

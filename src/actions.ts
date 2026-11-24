@@ -3,6 +3,7 @@ import { commitWebUrl, getChanges, getDetails, git, stashSelector } from './git'
 import { GraphController, WIP, errorText } from './controller';
 import { revisionUri } from './content';
 import * as path from 'node:path';
+import { dropChoices } from './drop';
 
 /** What VS Code passes from `data-vscode-context` on right-click. */
 interface Ctx {
@@ -11,6 +12,8 @@ interface Ctx {
   refKind?: 'branch' | 'remote' | 'tag' | 'head';
   /** `stash@{n}` when the row was drawn; only a label, since indexes shift. */
   stashRef?: string;
+  /** Drag and drop: the branch label `refName` was dropped on (else `sha` is the commit row). */
+  onto?: string;
 }
 
 type Handler = (repo: string, ctx: Ctx, panel: GraphController) => Promise<unknown>;
@@ -276,6 +279,20 @@ const handlers: Record<string, Handler> = {
   popStash: async (repo, ctx, p) => stashAction(repo, ctx, p, 'pop'),
   dropStash: async (repo, ctx, p) => stashAction(repo, ctx, p, 'drop'),
 
+  dropRef: async (repo, { refName, refKind, onto, sha }, p) => {
+    if (!refName || (refKind !== 'branch' && refKind !== 'remote')) return;
+    const current = await currentBranch(repo);
+    const canFF = !!onto && (await fastForwardable(repo, onto, refName));
+    const items = dropChoices({ src: refName, srcKind: refKind, onto, sha: onto ? undefined : sha }, current, canFF);
+    if (!items.length) return;
+    const pick = await vscode.window.showQuickPick(items, { title: `Drop ${refName} on ${onto ?? short(sha!)}` });
+    if (!pick) return;
+    for (const step of pick.steps) {
+      const label = step[0] === 'switch' ? `Switch to ${step[1]}` : pick.label;
+      if (!(await run(p, label, step))) return;
+    }
+  },
+
   deleteTag: async (repo, { refName }, p) => {
     if (await confirm(`Delete tag ${refName}?`, 'Only the local tag is deleted.', 'Delete')) {
       await run(p, `Delete tag ${refName}`, ['tag', '-d', refName!]);
@@ -296,6 +313,18 @@ async function stashAction(repo: string, { sha, stashRef }: Ctx, p: GraphControl
   }
   const verb = { apply: 'Apply', pop: 'Pop', drop: 'Drop' }[op];
   return run(p, `${verb} ${ref}`, ['stash', op, ref]);
+}
+
+/** True if `branch` is strictly behind `to`: moving it there is a fast-forward. */
+async function fastForwardable(repo: string, branch: string, to: string): Promise<boolean> {
+  try {
+    const [a, b] = (await git(repo, ['rev-parse', `refs/heads/${branch}`, to])).trim().split('\n');
+    if (a === b) return false;
+    await git(repo, ['merge-base', '--is-ancestor', branch, to]);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** True if any of the git config keys is set. */

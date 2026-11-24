@@ -11,6 +11,7 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - **Compare two commits**: select one, Ctrl/Cmd+click another (or right-click → Compare with Selected) to list every file changed between them; click a file or press Enter for the diffs, Esc to exit
 - **Right-click a commit**: checkout, create branch or tag, cherry-pick, merge, rebase, revert, reset, compare with working tree, open on GitHub/GitLab/Bitbucket, copy SHA or message
 - **Right-click a label**: switch to it, merge, rebase onto it, rename, delete, copy name
+- **Drag a branch label** onto another branch label to merge, rebase or fast-forward (dropping A on B: Merge A into B, Rebase B onto A); onto a commit to rebase the branch onto it or merge the commit in. A branch that isn't checked out is switched to first. Esc cancels; drag near the top or bottom edge to scroll. The same actions are in the right-click menus
 - **Sync**: ↓ pull and ↑ push counts in the toolbar (hover to preview the commits; Publish when a branch has no upstream); unpushed ↑ and unpulled ↓ commits marked in the Commit column; branch labels show ↓1↑2 or ⚠ when the upstream was deleted
 - **Highlight a branch**: hover a label to light its line down to where it forked from your branch; right-click → Highlight Branch Line (or select a commit and press L) to pin it; Esc or the chip clears it
 - **Stashes**: each stash shows as a row just above the commit it was made on, with a hollow square and a muted `stash@{n}` label; click for its message and files (untracked too), right-click to apply, pop or drop. Stashes on commits hidden by scope or not loaded yet stay hidden until their base is shown
@@ -42,5 +43,6 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - `src/hosts.ts`: editor tab and panel/sidebar view hosts
 - `src/repos.ts`: picks which repository to show
 - `src/actions.ts`: right-click menu actions
+- `src/drop.ts`: drag-and-drop menu: which merge / rebase / fast-forward to offer (pure, unit tested)
 - `src/content.ts`: read-only "file at revision" documents for diffs
 - `media/graph.js`, `media/graph.css`: webview UI

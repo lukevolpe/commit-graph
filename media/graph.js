@@ -1315,6 +1315,146 @@ ${filesHtml(d)}`;
     if (head !== undefined) draw(rulerColor('--ruler-head'), head, 0, bar, Math.max(3, tick));
   }
 
+  // ---- drag a branch label onto a label or commit: merge / rebase ---------------
+  // Pointer events, not HTML5 drag and drop (unreliable in webviews). Nothing happens until
+  // the pointer moves 4px, so a plain click on a label is untouched. The host shows the menu.
+
+  const DRAG_PX = 4;
+  const EDGE = 28;
+  /** { src, kind, srcSha, x0, y0, x, y, id, active, ghost, el, target, raf } while a label is pressed. */
+  let drag = null;
+
+  function refCtx(el) {
+    try {
+      return JSON.parse(el.dataset.vscodeContext || '');
+    } catch {
+      return null;
+    }
+  }
+
+  body.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    const ref = /** @type {HTMLElement} */ (e.target).closest('.ref');
+    const ctx = ref && refCtx(ref);
+    if (!ctx || (ctx.refKind !== 'branch' && ctx.refKind !== 'remote')) return;
+    const row = /** @type {HTMLElement} */ (ref.closest('.row'));
+    const r = row && state.rows[Number(row.dataset.i)];
+    if (!r) return;
+    drag = { src: ctx.refName, kind: ctx.refKind, srcSha: r.hash, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, id: e.pointerId, active: false, ghost: null, el: null, target: null, raf: 0 };
+    window.addEventListener('pointermove', onDragMove, true);
+    window.addEventListener('pointerup', onDragUp, true);
+    window.addEventListener('pointercancel', endDrag, true);
+    window.addEventListener('keydown', onDragKey, true);
+  });
+
+  function onDragMove(e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+    if (!drag.active) {
+      if (Math.hypot(drag.x - drag.x0, drag.y - drag.y0) < DRAG_PX) return;
+      startDrag();
+    }
+    drag.ghost.style.transform = `translate(${drag.x + 12}px, ${drag.y + 10}px)`;
+    updateDropTarget();
+    autoScroll();
+  }
+
+  function startDrag() {
+    drag.active = true;
+    const g = document.createElement('div');
+    g.className = 'drag-ghost';
+    g.innerHTML = `<i class="codicon codicon-${drag.kind === 'remote' ? 'cloud' : 'git-branch'}"></i><span>${esc(drag.src)}</span>`;
+    document.body.appendChild(g);
+    drag.ghost = g;
+    document.documentElement.classList.add('ref-dragging');
+    window.getSelection()?.removeAllRanges();
+    try {
+      body.setPointerCapture(drag.id); // keep getting moves outside the list
+    } catch {
+      // pointer already gone
+    }
+    clearTimeout(hoverTimer);
+    setHover(-1);
+  }
+
+  /** What's under the pointer: another local branch label, or a commit row (for a local branch). */
+  function dropTargetAt(x, y) {
+    const el = /** @type {HTMLElement | null} */ (document.elementFromPoint(x, y));
+    if (!el || !body.contains(el)) return null;
+    const ref = el.closest('.ref');
+    const ctx = ref && refCtx(ref);
+    if (ctx && ctx.refKind === 'branch' && ctx.refName !== drag.src) return { el: ref, onto: ctx.refName };
+    const row = /** @type {HTMLElement | null} */ (el.closest('.row'));
+    const r = row && state.rows[Number(row.dataset.i)];
+    if (!r || r.wip || r.stash || r.hash === drag.srcSha || drag.kind !== 'branch') return null;
+    return { el: row, sha: r.hash };
+  }
+
+  function updateDropTarget() {
+    if (!drag || !drag.active) return;
+    const t = dropTargetAt(drag.x, drag.y);
+    if (drag.el && drag.el !== (t && t.el)) drag.el.classList.remove('drop-target');
+    if (t) t.el.classList.add('drop-target');
+    drag.el = t && t.el;
+    drag.target = t && { onto: t.onto, sha: t.sha };
+  }
+
+  // Rows are re-rendered on scroll and refresh: re-mark the target on the new elements.
+  new MutationObserver(() => {
+    if (drag && drag.active) {
+      drag.el = null;
+      updateDropTarget();
+    }
+  }).observe(body, { childList: true });
+
+  /** Scrolls while the pointer is near the list's top or bottom edge, faster the closer it is. */
+  function autoScroll() {
+    if (drag.raf) return;
+    const step = () => {
+      drag.raf = 0;
+      if (!drag || !drag.active) return;
+      const box = scroller.getBoundingClientRect();
+      const d = drag.y < box.top + EDGE ? drag.y - (box.top + EDGE) : drag.y > box.bottom - EDGE ? drag.y - (box.bottom - EDGE) : 0;
+      if (!d) return;
+      scroller.scrollTop += Math.max(-EDGE, Math.min(EDGE, d)) / 2;
+      drag.raf = requestAnimationFrame(step);
+    };
+    drag.raf = requestAnimationFrame(step);
+  }
+
+  function onDragUp(e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    const d = drag;
+    endDrag();
+    if (d.active && d.target) post('dropRef', { refName: d.src, refKind: d.kind, onto: d.target.onto, sha: d.target.sha });
+  }
+
+  function onDragKey(e) {
+    if (!drag || !drag.active || e.key !== 'Escape') return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    endDrag();
+  }
+
+  function endDrag() {
+    if (!drag) return;
+    window.removeEventListener('pointermove', onDragMove, true);
+    window.removeEventListener('pointerup', onDragUp, true);
+    window.removeEventListener('pointercancel', endDrag, true);
+    window.removeEventListener('keydown', onDragKey, true);
+    cancelAnimationFrame(drag.raf);
+    if (drag.el) drag.el.classList.remove('drop-target');
+    if (drag.ghost) drag.ghost.remove();
+    document.documentElement.classList.remove('ref-dragging');
+    try {
+      if (body.hasPointerCapture(drag.id)) body.releasePointerCapture(drag.id);
+    } catch {
+      // already released
+    }
+    drag = null;
+  }
+
   updateScopeButtons();
   updateFocusChip();
   post('ready');
