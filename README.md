@@ -10,6 +10,7 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - **Diffs**: click a file for VS Code's diff view; the multi-diff icon (or Enter / double-click) opens every change
 - **Compare two commits**: select one, Ctrl/Cmd+click another (or right-click → Compare with Selected) to list every file changed between them; click a file or press Enter for the diffs, Esc to exit
 - **Right-click a commit**: checkout, create branch or tag, cherry-pick, merge, rebase, revert, reset, compare with working tree, open on GitHub/GitLab/Bitbucket, copy SHA or message
+- **Interactive rebase**: right-click a commit on your branch → Interactive Rebase From Here… opens an editor tab listing the commits after it, oldest first. Pick, reword (edit the message inline), edit, squash, fixup or drop each one; reorder by dragging or Alt+↑/↓; P R E S F D set the focused row's action, Ctrl+Enter starts. Warns when the commits are already pushed. Runs `git rebase -i` with the todo written for you, no terminal; if it stops (edit or conflicts) it's a normal rebase: `git rebase --continue` or `--abort`. Ranges with merges aren't supported
 - **Right-click a label**: switch to it, merge, rebase onto it, rename, delete, copy name
 - **Sync**: ↓ pull and ↑ push counts in the toolbar (hover to preview the commits; Publish when a branch has no upstream); unpushed ↑ and unpulled ↓ commits marked in the Commit column; branch labels show ↓1↑2 or ⚠ when the upstream was deleted
 - **Highlight a branch**: hover a label to light its line down to where it forked from your branch; right-click → Highlight Branch Line (or select a commit and press L) to pin it; Esc or the chip clears it
@@ -42,5 +43,7 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - `src/hosts.ts`: editor tab and panel/sidebar view hosts
 - `src/repos.ts`: picks which repository to show
 - `src/actions.ts`: right-click menu actions
+- `src/rebase.ts`: interactive rebase: todo building, checks and running git (unit and repo tested)
+- `src/rebaseEditor.ts`: the rebase editor tab (`media/rebase.js`, `media/rebase.css`)
 - `src/content.ts`: read-only "file at revision" documents for diffs
 - `media/graph.js`, `media/graph.css`: webview UI

@@ -5,6 +5,7 @@ import { GraphViewProvider, VIEW_ID, openInEditor } from './hosts';
 import { RevisionContentProvider, SCHEME } from './content';
 import { registerActions } from './actions';
 import { pickRepo } from './repos';
+import { registerRebaseEditor } from './rebaseEditor';
 
 export function activate(context: vscode.ExtensionContext): void {
   const view = new GraphViewProvider(context);
@@ -40,6 +41,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   registerActions(context);
+  registerRebaseEditor(context);
 }
 
 export function deactivate(): void {}
