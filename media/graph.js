@@ -23,6 +23,8 @@
   const emptyEl = $('empty');
   const syncEl = $('sync');
   const focusChip = $('focus-chip');
+  const historyChip = $('history-chip');
+  const linesChip = $('lines-chip');
 
   const saved = vscode.getState() || {};
   const state = {
@@ -57,7 +59,15 @@
     rowsVersion: 0,
     /** Compare mode: { base, other, from, to, files, error }; active only while base is selected. */
     cmp: null,
+    /** File history mode: repo-relative path the host limits the graph to, or null. */
+    history: saved.history || null,
+    /** Line history: { label, hashes } dimming the rest like search, or null. */
+    lines: saved.lines || null,
   };
+  if (state.lines) {
+    state.matches = state.lines.hashes;
+    state.matchSet = new Set(state.lines.hashes);
+  }
   const layout = JSON.parse(document.body.dataset.layout || '{}');
   setDetailsWidth(layout.width || saved.detailsWidth || 380);
   setDetailsHeight(layout.height || saved.detailsHeight || 0);
@@ -115,11 +125,19 @@
       case 'compareWith':
         startCompare(m.sha);
         break;
+      case 'lineMarks':
+        setLines({ label: m.label, hashes: m.hashes });
+        if (m.hashes.length) reveal(m.hashes[0]);
+        scroller.focus();
+        break;
       case 'highlight':
         setPin(m.ref ? { ref: m.ref } : m.sha ? { sha: m.sha } : null);
         break;
       case 'repoChanged':
         state.pin = null;
+        state.history = null;
+        state.lines = null;
+        updateHistoryChips();
         state.sync = null;
         state.outSet = new Set();
         state.inSet = new Set();
@@ -174,6 +192,8 @@
       state.outSet = new Set(m.sync ? m.sync.outgoing : []);
       state.inSet = new Set(m.sync ? m.sync.incoming : []);
       updateScopeButtons();
+      state.history = m.history || null;
+      updateHistoryChips();
       if (!m.keep) scroller.scrollTop = 0;
       else scroller.scrollTop = top;
     } else {
@@ -187,7 +207,7 @@
 
     const commits = state.rows.filter((r) => !r.wip && !r.stash).length;
     status.textContent = `${commits.toLocaleString()}${state.done ? '' : '+'} commits`;
-    if (!state.rows.length) showEmpty('No commits yet.');
+    if (!state.rows.length) showEmpty(state.history ? `No commits touch ${state.history}.` : 'No commits yet.');
     else emptyEl.hidden = true;
 
     if (m.mode === 'reset') {
@@ -524,6 +544,49 @@ ${author}
 
   focusChip.addEventListener('click', () => setPin(null));
 
+  // ---- file & line history ----------------------------------------------------
+
+  /** null: back to the full graph. The host reloads rows and echoes the path back. */
+  function setHistory(file) {
+    state.history = file;
+    persist();
+    updateHistoryChips();
+    post('setHistory', { file });
+  }
+
+  function setLines(lines) {
+    state.lines = lines;
+    state.query = '';
+    searchInput.value = '';
+    state.matches = lines ? lines.hashes : [];
+    state.matchSet = new Set(state.matches);
+    state.terms = [];
+    state.matchPos = -1;
+    updateSearchCount();
+    persist();
+    updateHistoryChips();
+    render();
+  }
+
+  function updateHistoryChips() {
+    const h = state.history;
+    historyChip.hidden = !h;
+    if (h) {
+      historyChip.title = `History of ${h}: back to the full graph (Esc)`;
+      historyChip.innerHTML = `<i class="codicon codicon-history"></i><span>History: ${esc(h)}</span><i class="codicon codicon-close"></i>`;
+    }
+    const l = state.lines;
+    linesChip.hidden = !l;
+    if (l) {
+      const n = `${l.hashes.length} ${l.hashes.length === 1 ? 'commit' : 'commits'}`;
+      linesChip.title = `${n} changed ${l.label}: clear (Esc)`;
+      linesChip.innerHTML = `<i class="codicon codicon-selection"></i><span>${esc(l.label)} · ${l.hashes.length}</span><i class="codicon codicon-close"></i>`;
+    }
+  }
+
+  historyChip.addEventListener('click', () => setHistory(null));
+  linesChip.addEventListener('click', () => setLines(null));
+
   // Preview: hovering a branch or tag label lights its line. Tracked with mousemove
   // because re-rendering swaps the elements under the pointer.
   let hoverTimer = 0;
@@ -642,7 +705,8 @@ ${filesHtml(d)}`;
             : `<span class="add">+${f.added}</span><span class="del">−${f.deleted}</span>`;
         const renamed = f.oldPath ? ` title="Renamed from ${esc(f.oldPath)}"` : '';
         const canOpen = f.status !== 'D';
-        return `<li>
+        const inHistory = state.history && (f.path === state.history || f.path.startsWith(state.history + '/'));
+        return `<li${inHistory ? ' class="history-file"' : ''}>
   <button class="file" data-file="${i}"${renamed}>
     <span class="st st-${f.status}" title="${statusName(f.status)}">${f.status}</span>
     <span class="fname">${esc(name)}</span>
@@ -865,6 +929,8 @@ ${filesHtml(d)}`;
     } else if (e.key === 'Escape') {
       if (state.selected) closeDetails();
       else if (state.pin) setPin(null);
+      else if (state.lines) setLines(null);
+      else if (state.history) setHistory(null);
     } else if ((e.key === 'l' || e.key === 'L') && !e.ctrlKey && !e.metaKey && !e.altKey) toggleLanePin();
     else if ((e.ctrlKey || e.metaKey) && e.key === 'c' && state.selected && state.selected !== WIP) {
       post('copy', { text: state.selected, label: 'commit SHA' });
@@ -988,6 +1054,7 @@ ${filesHtml(d)}`;
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
       state.query = searchInput.value.trim();
+      if (state.lines) setLines(null);
       state.matches = [];
       state.matchSet = new Set();
       state.matchPos = -1;
@@ -1148,6 +1215,8 @@ ${filesHtml(d)}`;
       detailsWidth: state.detailsWidth,
       detailsHeight: state.detailsHeight,
       pin: state.pin,
+      history: state.history,
+      lines: state.lines,
     });
   }
 
@@ -1317,5 +1386,6 @@ ${filesHtml(d)}`;
 
   updateScopeButtons();
   updateFocusChip();
-  post('ready');
+  updateHistoryChips();
+  post('ready', { history: state.history });
 })();

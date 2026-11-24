@@ -32,7 +32,7 @@ const PAGE = 500;
 export const WIP = 'WORKING_TREE';
 
 type InMessage =
-  | { type: 'ready' }
+  | { type: 'ready'; history?: string | null }
   | { type: 'refresh' }
   | { type: 'loadMore' }
   | { type: 'loadUntil'; hash: string }
@@ -50,7 +50,8 @@ type InMessage =
   | { type: 'push' }
   | { type: 'copy'; text: string; label: string }
   | { type: 'pickRef' }
-  | { type: 'layout'; width: number; height: number };
+  | { type: 'layout'; width: number; height: number }
+  | { type: 'setHistory'; file: string | null };
 
 type Row = Commit & { graph: GraphRow; wip?: boolean; stash?: string };
 
@@ -82,6 +83,11 @@ export class GraphController {
   private stashes: Stash[] = [];
   private done = false;
   private scope: Scope;
+  /** File history mode: repo-relative path the graph is limited to. */
+  private file: string | undefined;
+  /** Resolves once the webview has said 'ready': messages posted before then are lost. */
+  private markReady!: () => void;
+  private readonly whenReady = new Promise<void>((r) => (this.markReady = r));
   private searchIndex: Promise<SearchEntry[]> | undefined;
   /** `file:` pattern → matching commits; dropped with the search index. */
   private fileMatches = new Map<string, Promise<Set<string>>>();
@@ -137,6 +143,7 @@ export class GraphController {
     this.repoDisposables.forEach((d) => d.dispose());
     this.repoDisposables = [];
     this.lastQuery = '';
+    this.file = undefined;
     this.host.setTitle(path.basename(repo));
     this.post({ type: 'repoChanged' });
     void this.watch();
@@ -216,7 +223,10 @@ export class GraphController {
   private onMessage(msg: InMessage): void {
     switch (msg.type) {
       case 'ready':
+        // Restored from webview state; a history opened before the webview was ready wins.
+        if (msg.history && !this.file) this.file = msg.history;
         void this.enqueue(() => this.reload(false));
+        this.markReady();
         break;
       case 'refresh':
         void this.enqueue(() => this.withBusy('Refreshing', () => this.reload(true)));
@@ -271,6 +281,9 @@ export class GraphController {
       case 'pickRef':
         void this.pickRef().catch((e) => vscode.window.showErrorMessage(errorText(e)));
         break;
+      case 'setHistory':
+        this.showFileHistory(msg.file ?? undefined);
+        break;
     }
   }
 
@@ -290,7 +303,7 @@ export class GraphController {
     // Sync markers are a nicety: never let them break loading the graph.
     this._sync = await getSync(this.repo).catch(() => null);
     this.stashes = await getStashes(this.repo).catch(() => []);
-    this.commits = await getLog(this.repo, this.scope, 0, count);
+    this.commits = await getLog(this.repo, this.scope, 0, count, this.file);
     this.done = this.commits.length < count;
     this.layout = new GraphLayout();
     const rows = this.toRows(this.commits, true);
@@ -303,13 +316,14 @@ export class GraphController {
       head: this.head,
       scope: this.scope,
       sync: this._sync,
+      history: this.file ?? null,
     });
     if (this.lastQuery) await this.runSearch(this.lastQuery);
   }
 
   private async loadMore(): Promise<Row[]> {
     if (this.done) return [];
-    const page = await getLog(this.repo, this.scope, this.commits.length, PAGE);
+    const page = await getLog(this.repo, this.scope, this.commits.length, PAGE, this.file);
     this.commits.push(...page);
     this.done = page.length < PAGE;
     const rows = this.toRows(page, false);
@@ -326,8 +340,9 @@ export class GraphController {
 
   /** Lays out a batch of commits; the first batch gets the uncommitted row on top. */
   private toRows(commits: Commit[], first: boolean): Row[] {
-    const batch: (Commit & { wip?: boolean; stash?: string })[] = insertStashes(commits, this.stashes);
-    if (first && this.wipCount && this.head) batch.unshift(this.wipCommit());
+    // File history: no uncommitted row or stashes; their base often isn't shown.
+    const batch: (Commit & { wip?: boolean; stash?: string })[] = insertStashes(commits, this.file ? [] : this.stashes);
+    if (first && this.wipCount && this.head && !this.file) batch.unshift(this.wipCommit());
     const graph = this.layout.add(batch.map((c) => (c.stash ? { ...c, side: true } : c)));
     return batch.map((c, i) => ({ ...c, graph: graph[i] }));
   }
@@ -471,7 +486,7 @@ export class GraphController {
       this.post({ type: 'search', query, hashes: [] });
       return;
     }
-    this.searchIndex ??= getSearchIndex(this.repo, this.scope);
+    this.searchIndex ??= getSearchIndex(this.repo, this.scope, this.file);
     try {
       const q = parseQuery(query);
       const files = q.files.length ? await this.matchFiles(q.files) : undefined;
@@ -496,6 +511,29 @@ export class GraphController {
     );
     const [first, ...rest] = sets;
     return new Set([...first].filter((h) => rest.every((s) => s.has(h))));
+  }
+
+  // ---- file & line history ------------------------------------------------
+
+  /** Limits the graph to commits touching `file` (repo-relative); undefined for the full graph. */
+  showFileHistory(file: string | undefined): void {
+    if (file === this.file) return;
+    this.file = file;
+    void this.enqueue(() => this.withBusy('Loading', () => this.reload(false)));
+  }
+
+  /** Dims all but `hashes` (newest first) under a chip and selects the newest; after any pending load. */
+  showLineMarks(label: string, hashes: string[]): void {
+    void this.whenReady.then(() => this.enqueue(async () => this.post({ type: 'lineMarks', label, hashes })));
+  }
+
+  /** Selects a commit, loading history until it's there; after any pending load. */
+  revealCommit(hash: string): void {
+    void this.whenReady.then(() => this.enqueue(async () => this.post({ type: 'jumpTo', hash })));
+  }
+
+  get historyFile(): string | undefined {
+    return this.file;
   }
 
   // ---- html ----------------------------------------------------------------
@@ -536,6 +574,8 @@ export class GraphController {
     <div class="sync" id="sync"></div>
     <span class="spacer"></span>
     <button class="focus-chip" id="focus-chip" hidden title="Clear highlight (Esc)"></button>
+    <button class="focus-chip" id="lines-chip" hidden title="Clear line history (Esc)"></button>
+    <button class="focus-chip" id="history-chip" hidden title="Back to the full graph (Esc)"></button>
     <span class="status" id="status"></span>
     <button class="icon" id="go-head" title="Go to HEAD" aria-label="Go to HEAD"><i class="codicon codicon-target"></i></button>
     <button class="icon" id="fetch" title="Fetch all remotes" aria-label="Fetch"><i class="codicon codicon-cloud-download"></i></button>

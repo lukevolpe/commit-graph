@@ -17,6 +17,8 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - **Search** (Ctrl+F): message, author, email or SHA, across all history; non-matches dim in place; Enter / Shift+Enter or F3 step through matches. Terms combine (all must match): `author:ada` or `author:"Ada L"`, `message:fix`, `file:src/git.ts` or `file:*.css`, `after:2026-01-01` / `before:2026-06-01` / `after:2w`, `type:merge` / `type:nonmerge`, `#abc123` or `sha:abc123`
 - **Scrollbar markers**: like the editor's overview ruler: HEAD, selection, branch tips, uncommitted changes, unpushed ↑ / unpulled ↓ commits, search matches and the highlighted branch line, drawn under the scrollbar
 - **Scope**: all branches, or the current branch only
+- **File history**: right-click a file (explorer, editor tab or editor) → Show File History in Commit Graph, or run it from the palette for the active editor. The graph keeps its lanes but shows only commits touching that file (or folder), with the file marked in each commit's file list; the History chip or Esc returns to the full graph. Doesn't follow renames: history stops where the file got its current name
+- **Line history**: right-click in the editor → Show Line History in Commit Graph for the current line or selection; commits that changed those lines stay lit, the rest dim, the newest is selected. Reveal Commit in Graph jumps to the commit that last changed the current line (blame). Lines are as of the saved file at HEAD
 - **Live**: refreshes on commits, checkouts, fetches and file saves; history loads 500 commits at a time
 - **Keys**: ↑ ↓ PgUp PgDn Home End to move, P / Shift+P to go to first / second parent, C to the child on the same line, [ ] to the previous / next merge, H to HEAD, B to pick a branch or tag, Enter to open changes, Ctrl+C to copy SHA, Ctrl+click to compare, L to highlight the line, Esc to close details or clear the highlight, ? for the key list
 
@@ -42,5 +44,6 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - `src/hosts.ts`: editor tab and panel/sidebar view hosts
 - `src/repos.ts`: picks which repository to show
 - `src/actions.ts`: right-click menu actions
+- `src/history.ts`: file history, line history and blame commands from the editor and explorer
 - `src/content.ts`: read-only "file at revision" documents for diffs
 - `media/graph.js`, `media/graph.css`: webview UI
