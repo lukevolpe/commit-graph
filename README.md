@@ -15,7 +15,7 @@ Free git commit graph for VS Code, in the spirit of GitLens' graph.
 - **Search** (Ctrl+F): message, author, email or SHA, across all history; Enter / Shift+Enter or F3 step through matches
 - **Scope**: all branches, or the current branch only
 - **Live**: refreshes on commits, checkouts, fetches and file saves; history loads 500 commits at a time
-- **Keys**: ↑ ↓ PgUp PgDn Home End to move, Enter to open changes, Ctrl+C to copy SHA, L to highlight the line, Esc to close details or clear the highlight
+- **Keys**: ↑ ↓ PgUp PgDn Home End to move, P / Shift+P to go to first / second parent, C to the child on the same line, [ ] to the previous / next merge, H to HEAD, B to pick a branch or tag, Enter to open changes, Ctrl+C to copy SHA, L to highlight the line, Esc to close details or clear the highlight, ? for the key list
 
 ## Where it lives
 

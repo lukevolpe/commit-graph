@@ -129,6 +129,10 @@
         if (state.head) reveal(state.head);
         scroller.focus();
         break;
+      case 'jumpTo':
+        reveal(m.hash);
+        scroller.focus();
+        break;
       case 'focusSearch':
         searchInput.focus();
         searchInput.select();
@@ -739,6 +743,106 @@ ${filesHtml(d)}`;
     e.preventDefault();
     if (next >= 0) select(state.rows[next].hash);
   });
+
+  // ---- jump keys -------------------------------------------------------------
+
+  /** Selects a commit like the arrow keys do, loading more history if needed. */
+  function jumpTo(hash) {
+    if (!hash) return;
+    if (state.index.has(hash)) select(hash);
+    else reveal(hash);
+  }
+
+  /** C: the child continuing this commit's line (same lane first), else the nearest child above. */
+  function childOf(cur) {
+    const h = state.rows[cur].hash;
+    const col = state.rows[cur].graph.col;
+    let first = -1;
+    let any = -1;
+    for (let k = cur - 1; k >= 0; k--) {
+      const ps = state.rows[k].parents;
+      if (ps[0] === h) {
+        if (state.rows[k].graph.col === col) return k;
+        if (first < 0) first = k;
+      } else if (any < 0 && ps.includes(h)) any = k;
+    }
+    return first >= 0 ? first : any;
+  }
+
+  /** [ and ]: nearest merge commit above (dir -1) or below (dir 1). */
+  function mergeFrom(cur, dir) {
+    for (let k = cur + dir; k >= 0 && k < state.rows.length; k += dir) {
+      if (state.rows[k].parents.length > 1) return k;
+    }
+    return -1;
+  }
+
+  scroller.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey || !state.rows.length) return;
+    const cur = state.selected ? state.index.get(state.selected) ?? -1 : -1;
+    const r = cur >= 0 ? state.rows[cur] : null;
+    const k = e.key;
+    if (k === 'p' && r) jumpTo(r.parents[0]);
+    else if (k === 'P' && r) jumpTo(r.parents[1]);
+    else if ((k === 'c' || k === 'C') && r) {
+      const i = childOf(cur);
+      if (i >= 0) select(state.rows[i].hash);
+    } else if (k === '[' || k === ']') {
+      const i = mergeFrom(cur < 0 ? (k === ']' ? -1 : state.rows.length) : cur, k === ']' ? 1 : -1);
+      if (i >= 0) select(state.rows[i].hash);
+    } else if (k === 'h' || k === 'H') {
+      if (state.head) reveal(state.head);
+    } else if (k === 'b' || k === 'B') post('pickRef');
+    else return;
+    e.preventDefault();
+  });
+
+  // ---- keyboard help (?) -----------------------------------------------------
+
+  const KEYS = [
+    ['↑ ↓ PgUp PgDn Home End', 'Move'],
+    ['Enter', 'Open changes'],
+    ['P / Shift+P', 'First / second parent'],
+    ['C', 'Child on the same line'],
+    ['[ / ]', 'Previous / next merge'],
+    ['H', 'Go to HEAD'],
+    ['B', 'Go to branch or tag'],
+    ['L', 'Highlight line'],
+    ['Ctrl+C', 'Copy SHA'],
+    ['Ctrl+F / F3', 'Search / next match'],
+    ['Esc', 'Close details or highlight'],
+  ];
+  const helpEl = document.createElement('div');
+  helpEl.className = 'keys-help';
+  helpEl.hidden = true;
+  helpEl.setAttribute('role', 'dialog');
+  helpEl.setAttribute('aria-label', 'Keyboard shortcuts');
+  helpEl.innerHTML = `<div class="keys-card"><h2>Keyboard</h2><dl>${KEYS.map(
+    ([key, what]) => `<dt>${key.split(' ').map((p) => (p === '/' ? ' / ' : `<kbd>${esc(p)}</kbd>`)).join('')}</dt><dd>${esc(what)}</dd>`,
+  ).join('')}</dl><div class="muted">? or Esc to close</div></div>`;
+  document.body.appendChild(helpEl);
+  helpEl.addEventListener('mousedown', () => toggleHelp(false));
+
+  function toggleHelp(show) {
+    helpEl.hidden = !show;
+    if (!show) scroller.focus();
+  }
+
+  // Capture phase, so Esc closes the help before it closes the details pane.
+  window.addEventListener(
+    'keydown',
+    (e) => {
+      if (!helpEl.hidden && (e.key === 'Escape' || e.key === '?')) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleHelp(false);
+      } else if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target instanceof HTMLInputElement)) {
+        e.preventDefault();
+        toggleHelp(true);
+      }
+    },
+    true,
+  );
 
   scroller.addEventListener('scroll', render, { passive: true });
   window.addEventListener('resize', () => {

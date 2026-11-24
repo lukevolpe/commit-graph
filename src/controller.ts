@@ -13,6 +13,7 @@ import {
   getSearchIndex,
   getSync,
   getWorkingChanges,
+  git,
   gitDirs,
   search,
 } from './git';
@@ -38,6 +39,7 @@ type InMessage =
   | { type: 'pull' }
   | { type: 'push' }
   | { type: 'copy'; text: string; label: string }
+  | { type: 'pickRef' }
   | { type: 'layout'; width: number; height: number };
 
 type Row = Commit & { graph: GraphRow; wip?: boolean };
@@ -240,6 +242,9 @@ export class GraphController {
         void vscode.env.clipboard.writeText(msg.text);
         void vscode.window.setStatusBarMessage(`$(check) Copied ${msg.label}`, 2000);
         break;
+      case 'pickRef':
+        void this.pickRef().catch((e) => vscode.window.showErrorMessage(errorText(e)));
+        break;
     }
   }
 
@@ -320,6 +325,33 @@ export class GraphController {
     this.wipCount = count;
     if (toggled) return this.reload(true);
     if (count) this.post({ type: 'wip', subject: this.wipCommit().subject });
+  }
+
+  /** B key: quick pick of branch and tag tips; the webview reveals the pick. */
+  private async pickRef(): Promise<void> {
+    const fmt = ['%(HEAD)', '%(refname)', '%(objectname)', '%(*objectname)', '%(contents:subject)'].join('%00');
+    const out = await git(this.repo, ['for-each-ref', `--format=${fmt}`, 'refs/heads', 'refs/remotes', 'refs/tags']);
+    type Item = vscode.QuickPickItem & { hash?: string };
+    const groups: Record<string, Item[]> = { Branches: [], Remotes: [], Tags: [] };
+    for (const line of out.split('\n')) {
+      const [head, full, obj, peeled, subject] = line.split('\0');
+      if (!full || full.endsWith('/HEAD')) continue;
+      const hash = peeled || obj;
+      const [group, name, icon] = full.startsWith('refs/heads/')
+        ? ['Branches', full.slice(11), head === '*' ? 'check' : 'git-branch']
+        : full.startsWith('refs/remotes/')
+          ? ['Remotes', full.slice(13), 'cloud']
+          : ['Tags', full.slice(10), 'tag'];
+      const item: Item = { label: `$(${icon}) ${name}`, description: `${hash.slice(0, 7)}  ${subject ?? ''}`, hash };
+      if (head === '*') groups[group].unshift(item);
+      else groups[group].push(item);
+    }
+    const items: Item[] = [];
+    for (const [label, list] of Object.entries(groups)) {
+      if (list.length) items.push({ label, kind: vscode.QuickPickItemKind.Separator }, ...list);
+    }
+    const pick = await vscode.window.showQuickPick(items, { placeHolder: 'Go to branch or tag', matchOnDescription: true });
+    if (pick?.hash) this.post({ type: 'jumpTo', hash: pick.hash });
   }
 
   // ---- details & diffs -----------------------------------------------------
