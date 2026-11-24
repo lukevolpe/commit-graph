@@ -506,6 +506,45 @@ button.file {
 }
 .empty.error { color: var(--vscode-errorForeground); }
 
+/* ---- keyboard help (?) ------------------------------------------------------ */
+
+.keys-help {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--vscode-editor-background) 50%, transparent);
+}
+.keys-help[hidden] { display: none; }
+.keys-card {
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-editorWidget-border, var(--border));
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow, transparent);
+  border-radius: 4px;
+  padding: 10px 14px;
+  max-height: 90vh;
+  overflow: auto;
+}
+.keys-card h2 { font-size: 1em; margin: 0 0 8px; }
+.keys-card dl { display: grid; grid-template-columns: auto auto; gap: 3px 16px; margin: 0 0 8px; }
+.keys-card dt { text-align: right; white-space: nowrap; color: var(--muted); }
+.keys-card dd { margin: 0; white-space: nowrap; }
+.keys-card kbd {
+  font-family: inherit;
+  font-size: 0.9em;
+  padding: 0 4px;
+  margin: 0 1px;
+  border-radius: 3px;
+  color: var(--vscode-keybindingLabel-foreground, var(--vscode-foreground));
+  background: var(--vscode-keybindingLabel-background, transparent);
+  border: 1px solid var(--vscode-keybindingLabel-border, var(--border));
+  border-bottom-color: var(--vscode-keybindingLabel-bottomBorder, var(--border));
+}
+.keys-card > .muted { font-size: 0.9em; }
+
 /* ---- narrow list: drop columns (last, so it wins over the column rules) ---- */
 
 @container (max-width: 760px) {
