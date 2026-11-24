@@ -2,7 +2,7 @@
   "name": "commit-graph",
   "displayName": "Commit Graph",
   "description": "A free, simple git commit graph for VS Code.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "local",
   "license": "MIT",
   "engines": {
