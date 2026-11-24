@@ -10,11 +10,13 @@ import {
   getHead,
   getLog,
   getSearchIndex,
+  getSync,
   getWorkingChanges,
   git,
   parseNameStatus,
   parseNumstat,
   parseRefs,
+  parseTrack,
   search,
 } from '../src/git';
 import { GraphLayout } from '../src/lanes';
@@ -52,6 +54,13 @@ test('commitWebUrl understands ssh, https and scp-style remotes', () => {
   assert.equal(commitWebUrl('ssh://git@gitlab.com:2222/g/sub/r.git', h), 'https://gitlab.com/g/sub/r/-/commit/abc123');
   assert.equal(commitWebUrl('https://me@bitbucket.org/o/r.git', h), 'https://bitbucket.org/o/r/commits/abc123');
   assert.equal(commitWebUrl('not a url', h), undefined);
+});
+
+test('parseTrack reads ahead, behind and gone', () => {
+  assert.deepEqual(parseTrack('ahead 2, behind 13'), { ahead: 2, behind: 13, gone: false });
+  assert.deepEqual(parseTrack('behind 1'), { ahead: 0, behind: 1, gone: false });
+  assert.deepEqual(parseTrack('gone'), { ahead: 0, behind: 0, gone: true });
+  assert.deepEqual(parseTrack(''), { ahead: 0, behind: 0, gone: false });
 });
 
 test('search matches message, author and hash prefix in order', () => {
@@ -173,5 +182,54 @@ test('empty repo returns nothing instead of failing', async () => {
     assert.deepEqual(await getLog(empty, 'current', 0, 10), []);
   } finally {
     rmSync(empty, { recursive: true, force: true });
+  }
+});
+
+test('sync state: ahead, behind, gone upstream and publish remote', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'commit-graph-sync-'));
+  const remote = join(root, 'remote.git');
+  const a = join(root, 'a');
+  const b = join(root, 'b');
+  const ga = (...args: string[]) => git(a, ['-c', 'user.name=T', '-c', 'user.email=t@t', ...args]);
+  const gb = (...args: string[]) => git(b, ['-c', 'user.name=T', '-c', 'user.email=t@t', ...args]);
+  try {
+    await git(root, ['init', '-q', '--bare', '-b', 'main', remote]);
+    await git(root, ['clone', '-q', remote, a]);
+    await ga('commit', '-q', '--allow-empty', '-m', 'one');
+    await ga('push', '-q', '-u', 'origin', 'main');
+
+    let s = await getSync(a);
+    assert.equal(s.branch, 'main');
+    assert.equal(s.remote, 'origin');
+    assert.deepEqual(s.current, { upstream: 'origin/main', ahead: 0, behind: 0, gone: false });
+
+    // Someone else pushes; we commit locally.
+    await git(root, ['clone', '-q', remote, b]);
+    await gb('commit', '-q', '--allow-empty', '-m', 'theirs');
+    await gb('push', '-q');
+    await ga('commit', '-q', '--allow-empty', '-m', 'mine 1');
+    await ga('commit', '-q', '--allow-empty', '-m', 'mine 2');
+    await ga('fetch', '-q');
+    s = await getSync(a);
+    assert.deepEqual([s.current!.ahead, s.current!.behind], [2, 1]);
+    assert.equal(s.outgoing.length, 2);
+    assert.equal(s.outgoing[0], await getHead(a));
+    assert.equal(s.incoming.length, 1);
+
+    // A branch with no upstream; another whose upstream was deleted.
+    await ga('branch', 'local-only');
+    await ga('push', '-q', '-u', 'origin', 'main:doomed');
+    await ga('branch', '-q', '--set-upstream-to=origin/doomed', 'local-only');
+    await gb('push', '-q', 'origin', '--delete', 'doomed');
+    await ga('fetch', '-q', '--prune');
+    s = await getSync(a);
+    assert.equal(s.tracking['local-only'].gone, true);
+    await ga('switch', '-q', '-c', 'fresh');
+    s = await getSync(a);
+    assert.equal(s.branch, 'fresh');
+    assert.equal(s.current, null);
+    assert.deepEqual([s.outgoing, s.incoming], [[], []]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

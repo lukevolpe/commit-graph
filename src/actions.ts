@@ -222,12 +222,71 @@ const handlers: Record<string, Handler> = {
     }
   },
 
+  pull: async (repo, _ctx, p) => {
+    const s = p.sync;
+    if (!s?.current || s.current.gone) {
+      return vscode.window.showWarningMessage(
+        s?.branch ? `${s.branch} has no upstream to pull from.` : 'Check out a branch to pull.',
+      );
+    }
+    const args = ['pull'];
+    // Diverged with no pull strategy configured: git refuses, so ask instead.
+    if (s.current.ahead && s.current.behind && !(await configured(repo, 'pull.rebase', 'pull.ff'))) {
+      const pick = await vscode.window.showQuickPick(
+        [
+          { label: 'Merge', description: 'Create a merge commit', flag: '--no-rebase' },
+          { label: 'Rebase', description: 'Replay your commits on top', flag: '--rebase' },
+        ],
+        { title: `${s.branch}: ${s.current.ahead} to push, ${s.current.behind} to pull. How should they combine?` },
+      );
+      if (!pick) return;
+      args.push(pick.flag);
+    }
+    return run(p, `Pull ${s.current.upstream}`, args);
+  },
+
+  push: async (repo, _ctx, p) => {
+    const s = p.sync;
+    if (!s?.branch) return vscode.window.showWarningMessage('Check out a branch to push.');
+    if (!s.current || s.current.gone) {
+      if (!s.remote) return vscode.window.showWarningMessage('This repository has no remote to publish to.');
+      return run(p, `Publish ${s.branch} to ${s.remote}`, ['push', '-u', s.remote, s.branch]);
+    }
+    if (s.current.behind) {
+      const pull = 'Pull';
+      const pick = await vscode.window.showWarningMessage(
+        `${s.current.upstream} has ${s.current.behind} ${s.current.behind === 1 ? 'commit' : 'commits'} you don't have.`,
+        { modal: true, detail: 'Pull them first; a plain push would be rejected.' },
+        pull,
+      );
+      if (pick === pull) await handlers.pull(repo, {}, p);
+      return;
+    }
+    return run(p, `Push to ${s.current.upstream}`, ['push']);
+  },
+
+  highlightRef: async (_r, { refName }, p) => p.post({ type: 'highlight', ref: refName }),
+  highlightLane: async (_r, { sha }, p) => p.post({ type: 'highlight', sha }),
+  clearHighlight: async (_r, _ctx, p) => p.post({ type: 'highlight' }),
+
   deleteTag: async (repo, { refName }, p) => {
     if (await confirm(`Delete tag ${refName}?`, 'Only the local tag is deleted.', 'Delete')) {
       await run(p, `Delete tag ${refName}`, ['tag', '-d', refName!]);
     }
   },
 };
+
+/** True if any of the git config keys is set. */
+async function configured(repo: string, ...keys: string[]): Promise<boolean> {
+  for (const k of keys) {
+    try {
+      if ((await git(repo, ['config', '--get', k])).trim()) return true;
+    } catch {
+      // exit code 1: not set
+    }
+  }
+  return false;
+}
 
 async function copy(text: string, label: string): Promise<void> {
   await vscode.env.clipboard.writeText(text);

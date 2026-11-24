@@ -249,6 +249,80 @@ function mergeChanges(
   return names.map((f) => ({ ...f, ...(nums.get(f.path) ?? { added: null, deleted: null }) }));
 }
 
+// ---- sync state (ahead / behind upstream) --------------------------------------
+
+export interface Tracking {
+  upstream: string;
+  ahead: number;
+  behind: number;
+  /** Upstream branch was deleted on the remote. */
+  gone: boolean;
+}
+
+export interface SyncState {
+  /** Checked-out branch; null when detached or unborn. */
+  branch: string | null;
+  /** Tracking info for the checked-out branch, if it has an upstream. */
+  current: Tracking | null;
+  /** Remote to publish to when the branch has no upstream. */
+  remote: string | null;
+  /** Commits on HEAD not on its upstream (to push), newest first. */
+  outgoing: string[];
+  /** Commits on the upstream not on HEAD (to pull), newest first. */
+  incoming: string[];
+  /** Local branch name → tracking info, for branches that have an upstream. */
+  tracking: Record<string, Tracking>;
+}
+
+/** Most marked rows per direction: a far-diverged branch shouldn't stall a refresh. */
+const SYNC_LIMIT = 2000;
+
+/** Parses `%(upstream:track,nobracket)`: "ahead 2, behind 1", "gone" or "". */
+export function parseTrack(s: string): Omit<Tracking, 'upstream'> {
+  return {
+    ahead: Number(s.match(/ahead (\d+)/)?.[1] ?? 0),
+    behind: Number(s.match(/behind (\d+)/)?.[1] ?? 0),
+    gone: s.trim() === 'gone',
+  };
+}
+
+export async function getSync(cwd: string): Promise<SyncState> {
+  const fmt = ['%(HEAD)', '%(refname)', '%(upstream:short)', '%(upstream:track,nobracket)'].join('%00');
+  const [refs, remotes] = await Promise.all([
+    git(cwd, ['for-each-ref', `--format=${fmt}`, 'refs/heads']),
+    git(cwd, ['remote']),
+  ]);
+  const tracking: Record<string, Tracking> = {};
+  let branch: string | null = null;
+  for (const line of refs.split('\n')) {
+    if (!line) continue;
+    const [head, ref, upstream, track] = line.split('\0');
+    const name = ref.replace(/^refs\/heads\//, '');
+    if (head === '*') branch = name;
+    if (upstream) tracking[name] = { upstream, ...parseTrack(track ?? '') };
+  }
+  const names = remotes.split('\n').filter(Boolean);
+  const current = branch ? (tracking[branch] ?? null) : null;
+  let outgoing: string[] = [];
+  let incoming: string[] = [];
+  if (current && !current.gone && (current.ahead || current.behind)) {
+    const list = async (range: string) =>
+      (await git(cwd, ['rev-list', `--max-count=${SYNC_LIMIT}`, range, '--'])).split('\n').filter(Boolean);
+    [outgoing, incoming] = await Promise.all([
+      current.ahead ? list('@{upstream}..HEAD') : [],
+      current.behind ? list('HEAD..@{upstream}') : [],
+    ]);
+  }
+  return {
+    branch,
+    current,
+    remote: names.includes('origin') ? 'origin' : (names[0] ?? null),
+    outgoing,
+    incoming,
+    tracking,
+  };
+}
+
 export interface SearchEntry {
   hash: string;
   /** Lowercased message + author + email. */

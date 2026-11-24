@@ -22,6 +22,9 @@
   --del: var(--vscode-gitDecoration-deletedResourceForeground, var(--vscode-charts-red));
   --mod: var(--vscode-gitDecoration-modifiedResourceForeground, var(--vscode-charts-blue));
   --ren: var(--vscode-gitDecoration-renamedResourceForeground, var(--vscode-charts-purple));
+  /* Sync direction: outgoing (to push) reads as "added", incoming (to pull) as remote blue. */
+  --outgoing: var(--add);
+  --incoming: var(--vscode-charts-blue);
 }
 
 .c0 { --lane: var(--c0); }
@@ -164,6 +167,46 @@ button.icon:hover { background: var(--vscode-toolbar-hoverBackground); }
 
 .status { color: var(--muted); white-space: nowrap; margin-right: 4px; }
 
+/* ---- sync (pull / push) ------------------------------------------------------ */
+
+.sync { display: flex; gap: 2px; }
+.sync:empty { display: none; }
+.sync-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+  padding: 0 7px 0 5px;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.sync-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
+.sync-btn.in { color: var(--incoming); }
+.sync-btn.out { color: var(--outgoing); }
+.sync-btn.publish { font-weight: normal; color: var(--vscode-foreground); }
+.sync-btn .codicon { font-size: 14px; }
+.in-sync { display: inline-flex; align-items: center; height: 24px; padding: 0 4px; color: var(--muted); }
+
+/* ---- pinned highlight chip -------------------------------------------------- */
+
+.focus-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+  height: 22px;
+  padding: 0 4px 0 6px;
+  border-radius: 11px;
+  font-size: 0.92em;
+  color: var(--vscode-badge-foreground);
+  background: var(--vscode-badge-background);
+}
+.focus-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.focus-chip .codicon { font-size: 12px; }
+.focus-chip .codicon-close { opacity: 0.7; }
+.focus-chip:hover .codicon-close { opacity: 1; }
+
 /* ---- layout ---------------------------------------------------------------- */
 
 .main {
@@ -210,7 +253,7 @@ button.icon:hover { background: var(--vscode-toolbar-hoverBackground); }
 /* ---- rows ------------------------------------------------------------------ */
 
 .row {
-  --cols: var(--graph-w) minmax(0, 1fr) 170px 110px 72px;
+  --cols: var(--graph-w) minmax(0, 1fr) 170px 110px 82px;
   display: grid;
   grid-template-columns: var(--cols);
   align-items: center;
@@ -265,6 +308,10 @@ button.icon:hover { background: var(--vscode-toolbar-hoverBackground); }
 .col-author span:last-child { overflow: hidden; text-overflow: ellipsis; }
 .col-graph { height: 100%; }
 
+.col-sha .mark { font-size: 12px; margin-right: 3px; vertical-align: -2px; }
+.col-sha .mark.out { color: var(--outgoing); }
+.col-sha .mark.in { color: var(--incoming); }
+
 mark {
   background: var(--vscode-editor-findMatchHighlightBackground);
   color: inherit;
@@ -280,6 +327,14 @@ mark {
 .n.merge { fill: var(--lane); }
 .n.ring { fill: none; stroke: var(--lane); stroke-width: 2; }
 .n.wip { fill: var(--bg); stroke: var(--lane); stroke-width: 1.5; stroke-dasharray: 2 2; }
+
+/* Lane highlight: the focused line stays bold, everything else steps back. */
+.focusing .l, .focusing .n { transition: opacity .12s; }
+.focusing .l:not(.hl) { opacity: 0.22; }
+.focusing .n:not(.hl) { opacity: 0.3; }
+.focusing .l.hl { stroke-width: 3; }
+.row.off > div:not(.col-graph) { opacity: 0.45; }
+@media (prefers-reduced-motion: reduce) { .focusing .l, .focusing .n { transition: none; } }
 
 /* ---- ref labels ------------------------------------------------------------ */
 
@@ -301,6 +356,8 @@ mark {
 .ref > span { overflow: hidden; text-overflow: ellipsis; }
 .ref .codicon { font-size: 12px; color: var(--lane); }
 .ref .codicon.sync { color: var(--muted); }
+.ref .codicon.gone { color: var(--vscode-editorWarning-foreground, var(--vscode-charts-yellow)); }
+.ref .track { color: var(--muted); font-size: 0.92em; font-variant-numeric: tabular-nums; margin-left: 1px; }
 .ref.current { font-weight: 600; background: color-mix(in srgb, var(--lane) 30%, transparent); }
 .ref.remote { background: transparent; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lane) 45%, transparent); color: var(--muted); }
 .ref.tag { background: transparent; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lane) 45%, transparent); }
@@ -452,11 +509,11 @@ button.file {
 /* ---- narrow list: drop columns (last, so it wins over the column rules) ---- */
 
 @container (max-width: 760px) {
-  .row { --cols: var(--graph-w) minmax(0, 1fr) 90px 64px; }
+  .row { --cols: var(--graph-w) minmax(0, 1fr) 90px 80px; }
   .row .col-author { display: none; }
 }
 @container (max-width: 520px) {
-  .row { --cols: var(--graph-w) minmax(0, 1fr) 64px; }
+  .row { --cols: var(--graph-w) minmax(0, 1fr) 80px; }
   .row .col-date { display: none; }
 }
 @media (max-width: 640px) {
@@ -477,7 +534,10 @@ button.file {
   .resizer::after { inset: 1px 0; }
   .resizer:hover::after, .resizer.dragging::after { inset: 0; }
   .toolbar { gap: 6px; padding: 6px; }
-  .search { width: auto; flex: 1; min-width: 0; }
+  .search { width: auto; flex: 1; min-width: 90px; }
+  .focus-chip > span, .focus-chip .codicon-close { display: none; }
+  .focus-chip { padding: 0 6px; }
+  .sync-btn { padding: 0 4px 0 2px; }
   .scope .long { display: none; }
   .scope button { padding: 0 8px; }
   .spacer { display: none; }

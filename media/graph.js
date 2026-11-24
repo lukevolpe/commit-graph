@@ -21,6 +21,8 @@
   const searchCount = $('search-count');
   const progress = $('progress');
   const emptyEl = $('empty');
+  const syncEl = $('sync');
+  const focusChip = $('focus-chip');
 
   const saved = vscode.getState() || {};
   const state = {
@@ -41,6 +43,16 @@
     matchPos: -1,
     pendingReveal: null,
     busy: 0,
+    /** Ahead/behind info from the extension (see SyncState in git.ts). */
+    sync: null,
+    outSet: new Set(),
+    inSet: new Set(),
+    /** Pinned lane highlight: { ref } or { sha }. */
+    pin: saved.pin || null,
+    /** Row index whose label is hovered (preview highlight), or -1. */
+    hover: -1,
+    /** Bumped whenever rows change, to invalidate the cached focus. */
+    rowsVersion: 0,
   };
   const layout = JSON.parse(document.body.dataset.layout || '{}');
   setDetailsWidth(layout.width || saved.detailsWidth || 380);
@@ -88,7 +100,16 @@
           if (state.index.has(m.hash)) select(m.hash, { center: true });
         }
         break;
+      case 'highlight':
+        setPin(m.ref ? { ref: m.ref } : m.sha ? { sha: m.sha } : null);
+        break;
       case 'repoChanged':
+        state.pin = null;
+        state.sync = null;
+        state.outSet = new Set();
+        state.inSet = new Set();
+        renderSync();
+        updateFocusChip();
         state.rows = [];
         state.index = new Map();
         state.selected = null;
@@ -130,6 +151,9 @@
       state.rows = m.rows;
       state.head = m.head;
       state.scope = m.scope;
+      state.sync = m.sync;
+      state.outSet = new Set(m.sync ? m.sync.outgoing : []);
+      state.inSet = new Set(m.sync ? m.sync.incoming : []);
       updateScopeButtons();
       if (!m.keep) scroller.scrollTop = 0;
       else scroller.scrollTop = top;
@@ -137,6 +161,7 @@
       state.rows = state.rows.concat(m.rows);
     }
     state.done = m.done;
+    state.rowsVersion++;
     state.index = new Map(state.rows.map((r, i) => [r.hash, i]));
     updateWidth();
     spacer.style.height = state.rows.length * ROW + 'px';
@@ -150,7 +175,11 @@
       if (state.selected && !state.index.has(state.selected)) closeDetails();
       else if (state.selected === WIP || (state.selected && !state.details)) post('select', { hash: state.selected });
       renderDetails();
+      // A pinned branch that no longer exists (deleted, or hidden by scope) drops its highlight.
+      if (state.pin && !focusInfo()) setPin(null);
+      renderSync();
     }
+    updateFocusChip();
     render();
   }
 
@@ -177,8 +206,10 @@
     const start = Math.max(0, Math.floor(top / ROW) - 8);
     const end = Math.min(state.rows.length, Math.ceil((top + scroller.clientHeight) / ROW) + 8);
     body.style.transform = `translateY(${start * ROW}px)`;
+    const f = activeFocus();
+    scroller.classList.toggle('focusing', !!f);
     let html = '';
-    for (let i = start; i < end; i++) html += rowHtml(state.rows[i], i);
+    for (let i = start; i < end; i++) html += rowHtml(state.rows[i], i, f);
     body.innerHTML = html;
 
     if (!state.done && !state.loading && state.rows.length && end >= state.rows.length - 150) {
@@ -189,8 +220,9 @@
 
   const x = (lane) => LANE / 2 + lane * LANE;
 
-  function graphSvg(r) {
+  function graphSvg(r, i, f) {
     const g = r.graph;
+    const m = f && f.marks.get(i);
     const cx = x(g.col);
     const cy = ROW / 2;
     let paths = '';
@@ -201,10 +233,13 @@
       else if (l.kind === 'in') d = lx === cx ? `M${lx} 0V${cy}` : `M${lx} 0C${lx} ${cy * 0.9} ${cx} ${cy * 0.4} ${cx} ${cy}`;
       else d = lx === cx ? `M${cx} ${cy}V${ROW}` : `M${cx} ${cy}C${cx} ${cy * 1.6} ${lx} ${cy * 1.1} ${lx} ${ROW}`;
       const dashed = r.wip && l.kind === 'out' ? ' wip' : '';
-      paths += `<path class="l c${l.color % COLORS}${dashed}" d="${d}"/>`;
+      const on =
+        m && (l.kind === 'pass' ? m.pass.has(l.lane) : l.kind === 'out' ? l.lane === m.out : l.lane === m.inn);
+      const hl = on ? ' hl' : '';
+      paths += `<path class="l c${l.color % COLORS}${dashed}${hl}" d="${d}"/>`;
     }
     // HEAD row: the dashed line from the uncommitted row arrives here.
-    const c = `c${g.color % COLORS}`;
+    const c = `c${g.color % COLORS}` + (m && m.node ? ' hl' : '');
     let node;
     if (r.wip) node = `<circle class="n wip ${c}" cx="${cx}" cy="${cy}" r="4.5"/>`;
     else if (r.hash === state.head) node = `<circle class="n ${c}" cx="${cx}" cy="${cy}" r="3.5"/><circle class="n ring ${c}" cx="${cx}" cy="${cy}" r="6.5"/>`;
@@ -213,25 +248,32 @@
     return `<svg class="graph" width="${state.graphW}" height="${ROW}" aria-hidden="true">${paths}${node}</svg>`;
   }
 
-  function rowHtml(r, i) {
+  function rowHtml(r, i, f) {
     const sel = r.hash === state.selected;
     const dim = state.query && !state.matchSet.has(r.hash);
-    const cls = ['row', sel && 'selected', dim && 'dim', r.hash === state.head && 'head', r.wip && 'wip-row']
+    const off = !!f && !f.marks.get(i)?.node;
+    const cls = ['row', sel && 'selected', dim && 'dim', off && 'off', r.hash === state.head && 'head', r.wip && 'wip-row']
       .filter(Boolean)
       .join(' ');
+    const pinned = focusInfo();
     const ctx = r.wip
       ? { webviewSection: 'wip', preventDefaultContextMenuItems: true }
-      : { webviewSection: 'commit', sha: r.hash, preventDefaultContextMenuItems: true };
+      : {
+          webviewSection: 'commit',
+          sha: r.hash,
+          highlighted: !!pinned && !!pinned.marks.get(i)?.node,
+          preventDefaultContextMenuItems: true,
+        };
     const color = r.graph.color % COLORS;
     const author = r.wip
       ? '<div class="col-author"></div>'
       : `<div class="col-author" title="${esc(r.author)} &lt;${esc(r.email)}&gt;">${avatar(r.author, r.email)}<span>${esc(r.author)}</span></div>`;
     return `<div class="${cls}" data-i="${i}" role="option" aria-selected="${sel}" data-vscode-context='${attr(JSON.stringify(ctx))}'>
-<div class="col-graph">${graphSvg(r)}</div>
+<div class="col-graph">${graphSvg(r, i, f)}</div>
 <div class="col-msg">${badges(r.refs, color)}<span class="subject">${highlight(r.subject)}</span></div>
 ${author}
 <div class="col-date" title="${r.wip ? '' : fullDate(r.date)}">${r.wip ? '' : relDate(r.date)}</div>
-<div class="col-sha">${r.wip ? '<i class="codicon codicon-edit"></i>' : r.hash.slice(0, 7)}</div>
+<div class="col-sha">${r.wip ? '<i class="codicon codicon-edit"></i>' : syncMark(r.hash) + r.hash.slice(0, 7)}</div>
 </div>`;
   }
 
@@ -276,11 +318,212 @@ ${author}
       refName: r.name,
       refKind: r.kind,
       refCurrent: !!r.current,
+      highlighted: !!state.pin && state.pin.ref === r.name,
       preventDefaultContextMenuItems: true,
     };
-    const tip = [r.name, ...(r.remotes || [])].join(', ') + (r.current ? ' (checked out)' : '');
-    const sync = r.remotes ? '<i class="codicon codicon-cloud sync"></i>' : '';
+    let tip = [r.name, ...(r.remotes || [])].join(', ') + (r.current ? ' (checked out)' : '');
+    let sync = r.remotes ? '<i class="codicon codicon-cloud sync"></i>' : '';
+    const t = r.kind === 'branch' && state.sync ? state.sync.tracking[r.name] : null;
+    if (t && t.gone) {
+      sync = '<i class="codicon codicon-warning gone"></i>';
+      tip += `\nUpstream ${t.upstream} was deleted`;
+    } else if (t && (t.ahead || t.behind)) {
+      sync = `<span class="track">${t.behind ? `↓${t.behind}` : ''}${t.ahead ? `↑${t.ahead}` : ''}</span>`;
+      tip += `\n${aheadBehind(t)} ${t.upstream}`;
+    }
     return `<span class="ref ${r.kind}${r.current ? ' current' : ''} c${color}" title="${esc(tip)}" data-vscode-context='${attr(JSON.stringify(ctx))}'><i class="codicon codicon-${icon}"></i><span>${esc(r.name)}</span>${sync}</span>`;
+  }
+
+  // ---- sync state (ahead / behind upstream) ---------------------------------------
+
+  function syncMark(hash) {
+    const c = state.sync && state.sync.current;
+    if (state.outSet.has(hash)) return `<i class="codicon codicon-arrow-up mark out" title="Not pushed to ${esc(c.upstream)}"></i>`;
+    if (state.inSet.has(hash)) return `<i class="codicon codicon-arrow-down mark in" title="On ${esc(c.upstream)}, not pulled yet"></i>`;
+    return '';
+  }
+
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+  function aheadBehind(t) {
+    const parts = [];
+    if (t.ahead) parts.push(`${t.ahead} ahead of`);
+    if (t.behind) parts.push(`${t.behind} behind`);
+    return parts.join(', ');
+  }
+
+  /** Tooltip listing the first few commits a pull or push would move. */
+  function commitList(hashes, total) {
+    const lines = [];
+    for (const h of hashes.slice(0, 8)) {
+      const i = state.index.get(h);
+      lines.push(`• ${h.slice(0, 7)}  ${i === undefined ? '' : state.rows[i].subject}`);
+    }
+    if (total > lines.length) lines.push(`…and ${total - lines.length} more`);
+    return lines.length ? '\n\n' + lines.join('\n') : '';
+  }
+
+  function renderSync() {
+    const s = state.sync;
+    if (!s || !s.branch) {
+      syncEl.innerHTML = '';
+      return;
+    }
+    const c = s.current;
+    const btn = (act, icon, label, tip, cls = '') =>
+      `<button class="sync-btn ${cls}" data-act="${act}" title="${esc(tip)}" aria-label="${esc(tip.split('\n')[0])}"><i class="codicon codicon-${icon}"></i>${label}</button>`;
+    let html = '';
+    if (!c || c.gone) {
+      if (s.remote) {
+        const why = c ? `${c.upstream} was deleted. ` : '';
+        html = btn('push', 'cloud-upload', '<span>Publish</span>', `${why}Publish ${s.branch} to ${s.remote}`, 'publish');
+      }
+    } else if (!c.ahead && !c.behind) {
+      html = `<span class="in-sync" title="${esc(`${s.branch} is up to date with ${c.upstream} (as of the last fetch)`)}"><i class="codicon codicon-check"></i></span>`;
+    } else {
+      if (c.behind) {
+        html += btn('pull', 'arrow-down', `<span>${c.behind}</span>`, `Pull ${plural(c.behind, 'commit')} from ${c.upstream}${commitList(s.incoming, c.behind)}`, 'in');
+      }
+      if (c.ahead) {
+        html += btn('push', 'arrow-up', `<span>${c.ahead}</span>`, `Push ${plural(c.ahead, 'commit')} to ${c.upstream}${commitList(s.outgoing, c.ahead)}`, 'out');
+      }
+    }
+    syncEl.innerHTML = html;
+  }
+
+  syncEl.addEventListener('click', (e) => {
+    const b = /** @type {HTMLElement} */ (e.target).closest('[data-act]');
+    if (b) post(b.dataset.act);
+  });
+
+  // ---- lane highlight ------------------------------------------------------------
+//
+  // A branch's line is its first-parent chain from the tip down to the fork point: the
+  // first commit that is also on the checked-out branch's first-parent line. The checked-out
+  // branch itself (or anything already on its line) shows its whole line.
+
+  let baseCache = { key: -1, set: new Set() };
+  /** First-parent line of HEAD, within the loaded rows. */
+  function baseLine() {
+    if (baseCache.key !== state.rowsVersion) {
+      const set = new Set();
+      let h = state.head;
+      while (h && state.index.has(h) && !set.has(h)) {
+        set.add(h);
+        h = state.rows[state.index.get(h)].parents[0];
+      }
+      baseCache = { key: state.rowsVersion, set };
+    }
+    return baseCache.set;
+  }
+
+  /**
+   * Walks the first-parent chain from row i. Returns per-row marks of what to light:
+   * the node, and the lane of the line leaving it (out), passing by (pass) or arriving (inn).
+   * Each hop A → parent P is lane A.col all the way: lanes.ts keeps a first parent in its child's lane.
+   */
+  function chainFrom(i) {
+    const base = baseLine();
+    const whole = !state.rows[i].wip && base.has(state.rows[i].hash);
+    const marks = new Map();
+    const mark = (k) => {
+      let m = marks.get(k);
+      if (!m) marks.set(k, (m = { node: false, out: -1, inn: -1, pass: new Set() }));
+      return m;
+    };
+    let a = i;
+    for (;;) {
+      const r = state.rows[a];
+      mark(a).node = true;
+      if (a !== i && !whole && base.has(r.hash)) break; // fork point
+      const p = r.parents[0];
+      if (!p) break;
+      const lane = r.graph.col;
+      mark(a).out = lane;
+      const pi = state.index.get(p);
+      const stop = pi === undefined ? state.rows.length : pi;
+      for (let k = a + 1; k < stop; k++) mark(k).pass.add(lane);
+      if (pi === undefined) break; // parent not loaded yet: the line runs off the bottom
+      mark(pi).inn = lane;
+      a = pi;
+    }
+    return { marks, start: i, end: a };
+  }
+
+  let pinCache = { key: '', info: null };
+  /** Resolved pinned highlight, or null. */
+  function focusInfo() {
+    const p = state.pin;
+    if (!p || !state.rows.length) return null;
+    const key = JSON.stringify(p) + '|' + state.rowsVersion;
+    if (pinCache.key !== key) {
+      let info = null;
+      const i = p.sha ? (state.index.get(p.sha) ?? -1) : state.rows.findIndex((r) => r.refs.some((x) => x.name === p.ref));
+      if (i >= 0) info = chainFrom(i);
+      pinCache = { key, info };
+    }
+    return pinCache.info;
+  }
+
+  let hoverCache = { key: '', info: null };
+  /** Hover preview wins over the pin. */
+  function activeFocus() {
+    if (state.hover < 0 || state.hover >= state.rows.length) return focusInfo();
+    const key = state.hover + '|' + state.rowsVersion;
+    if (hoverCache.key !== key) hoverCache = { key, info: chainFrom(state.hover) };
+    return hoverCache.info;
+  }
+
+  function setPin(pin) {
+    state.pin = pin;
+    persist();
+    updateFocusChip();
+    render();
+  }
+
+  function updateFocusChip() {
+    const p = state.pin;
+    focusChip.hidden = !p;
+    if (!p) return;
+    const name = p.ref ? p.ref : p.sha === WIP ? 'uncommitted changes' : p.sha.slice(0, 7);
+    focusChip.innerHTML = `<i class="codicon codicon-pinned"></i><span>${esc(name)}</span><i class="codicon codicon-close"></i>`;
+  }
+
+  focusChip.addEventListener('click', () => setPin(null));
+
+  // Preview: hovering a branch or tag label lights its line. Tracked with mousemove
+  // because re-rendering swaps the elements under the pointer.
+  let hoverTimer = 0;
+  body.addEventListener('mousemove', (e) => {
+    const ref = /** @type {HTMLElement} */ (e.target).closest('.ref');
+    const row = ref && /** @type {HTMLElement} */ (ref.closest('.row'));
+    const i = row ? Number(row.dataset.i) : -1;
+    if (i === state.hover) {
+      clearTimeout(hoverTimer);
+      return;
+    }
+    clearTimeout(hoverTimer);
+    if (i < 0) setHover(-1);
+    else hoverTimer = setTimeout(() => setHover(i), 120);
+  });
+  body.addEventListener('mouseleave', () => {
+    clearTimeout(hoverTimer);
+    setHover(-1);
+  });
+
+  function setHover(i) {
+    if (i === state.hover) return;
+    state.hover = i;
+    render();
+  }
+
+  /** L: pin or unpin the selected commit's lane. */
+  function toggleLanePin() {
+    if (!state.selected) return;
+    const f = focusInfo();
+    const i = state.index.get(state.selected);
+    if (f && i !== undefined && f.marks.get(i)?.node) setPin(null);
+    else setPin({ sha: state.selected });
   }
 
   // ---- details pane ----------------------------------------------------------
@@ -486,7 +729,10 @@ ${filesHtml(d)}`;
     else if (e.key === 'Enter' && state.details && state.details.files.length) {
       const d = state.details;
       post('openAll', { hash: d.hash, parent: d.parents[0] || null, files: d.files });
-    } else if (e.key === 'Escape') closeDetails();
+    } else if (e.key === 'Escape') {
+      if (state.selected) closeDetails();
+      else if (state.pin) setPin(null);
+    } else if ((e.key === 'l' || e.key === 'L') && !e.ctrlKey && !e.metaKey && !e.altKey) toggleLanePin();
     else if ((e.ctrlKey || e.metaKey) && e.key === 'c' && state.selected && state.selected !== WIP) {
       post('copy', { text: state.selected, label: 'commit SHA' });
     } else return;
@@ -650,7 +896,12 @@ ${filesHtml(d)}`;
   }
 
   function persist() {
-    vscode.setState({ selected: state.selected, detailsWidth: state.detailsWidth, detailsHeight: state.detailsHeight });
+    vscode.setState({
+      selected: state.selected,
+      detailsWidth: state.detailsWidth,
+      detailsHeight: state.detailsHeight,
+      pin: state.pin,
+    });
   }
 
   // ---- helpers ---------------------------------------------------------------
@@ -719,5 +970,6 @@ ${filesHtml(d)}`;
   }
 
   updateScopeButtons();
+  updateFocusChip();
   post('ready');
 })();

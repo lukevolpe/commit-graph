@@ -140,6 +140,33 @@
         "title": "Search Commits",
         "category": "Commit Graph",
         "icon": "$(search)"
+      },
+      {
+        "command": "commitGraph.pull",
+        "title": "Pull",
+        "category": "Commit Graph",
+        "icon": "$(arrow-down)"
+      },
+      {
+        "command": "commitGraph.push",
+        "title": "Push",
+        "category": "Commit Graph",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "commitGraph.highlightRef",
+        "title": "Highlight Branch Line",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.highlightLane",
+        "title": "Highlight Line From Here",
+        "category": "Commit Graph"
+      },
+      {
+        "command": "commitGraph.clearHighlight",
+        "title": "Clear Highlight",
+        "category": "Commit Graph"
       }
     ],
     "menus": {
@@ -229,6 +256,18 @@
         },
         {
           "command": "commitGraph.focusSearch",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.highlightRef",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.highlightLane",
+          "when": "false"
+        },
+        {
+          "command": "commitGraph.clearHighlight",
           "when": "false"
         }
       ],
@@ -337,6 +376,21 @@
           "command": "commitGraph.copySha",
           "when": "webviewId == 'commitGraph' && webviewSection == 'ref'",
           "group": "5_copy@2"
+        },
+        {
+          "command": "commitGraph.highlightLane",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'commit' && !highlighted",
+          "group": "4_compare@3"
+        },
+        {
+          "command": "commitGraph.clearHighlight",
+          "when": "webviewId == 'commitGraph' && webviewSection =~ /^(commit|ref)$/ && highlighted",
+          "group": "4_compare@3"
+        },
+        {
+          "command": "commitGraph.highlightRef",
+          "when": "webviewId == 'commitGraph' && webviewSection == 'ref' && !highlighted",
+          "group": "4_compare@3"
         }
       ],
       "view/title": [

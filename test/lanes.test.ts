@@ -57,3 +57,20 @@ test('root commit ends its lane', () => {
   const rows = new GraphLayout().add([c('A')]);
   assert.deepEqual(rows[0], { col: 0, color: 0, lines: [] });
 });
+
+test('a first parent is always reached on its child\'s lane (lane highlight walks this)', () => {
+  // Two side branches; B2's first parent M1 is also waited for by M2's lane.
+  const commits = [c('M2', 'M1', 'B2'), c('B2', 'M1'), c('M1', 'A', 'B1'), c('B1', 'A'), c('A')];
+  const rows = new GraphLayout().add(commits);
+  const at = new Map(commits.map((x, i) => [x.hash, i]));
+  commits.forEach((x, i) => {
+    const p = x.parents[0];
+    if (!p) return;
+    const lane = rows[i].col;
+    assert.ok(rows[i].lines.some((l) => l.kind === 'out' && l.lane === lane), `${x.hash} leaves on lane ${lane}`);
+    for (let k = i + 1; k < at.get(p)!; k++) {
+      assert.ok(rows[k].lines.some((l) => l.kind === 'pass' && l.lane === lane), `lane ${lane} passes row ${k}`);
+    }
+    assert.ok(rows[at.get(p)!].lines.some((l) => l.kind === 'in' && l.lane === lane), `${p} entered from lane ${lane}`);
+  });
+});

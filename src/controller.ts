@@ -6,10 +6,12 @@ import {
   FileChange,
   Scope,
   SearchEntry,
+  SyncState,
   getDetails,
   getHead,
   getLog,
   getSearchIndex,
+  getSync,
   getWorkingChanges,
   gitDirs,
   search,
@@ -33,6 +35,8 @@ type InMessage =
   | { type: 'search'; query: string }
   | { type: 'setScope'; scope: Scope }
   | { type: 'fetch' }
+  | { type: 'pull' }
+  | { type: 'push' }
   | { type: 'copy'; text: string; label: string }
   | { type: 'layout'; width: number; height: number };
 
@@ -61,6 +65,7 @@ export class GraphController {
   private layout = new GraphLayout();
   private head: string | null = null;
   private wipCount = 0;
+  private _sync: SyncState | null = null;
   private done = false;
   private scope: Scope;
   private searchIndex: Promise<SearchEntry[]> | undefined;
@@ -101,6 +106,11 @@ export class GraphController {
 
   get repo(): string {
     return this._repo;
+  }
+
+  /** Ahead/behind state as of the last reload. */
+  get sync(): SyncState | null {
+    return this._sync;
   }
 
   /** Points this graph at another repository. */
@@ -219,7 +229,9 @@ export class GraphController {
         void this.enqueue(() => this.withBusy('Loading', () => this.reload(false)));
         break;
       case 'fetch':
-        void vscode.commands.executeCommand('commitGraph.fetch');
+      case 'pull':
+      case 'push':
+        void vscode.commands.executeCommand(`commitGraph.${msg.type}`);
         break;
       case 'layout':
         void this.context.globalState.update(this.layoutKey, { width: msg.width, height: msg.height });
@@ -243,11 +255,22 @@ export class GraphController {
     this.searchIndex = undefined;
     this.head = await getHead(this.repo);
     this.wipCount = this.head ? (await getWorkingChanges(this.repo)).length : 0;
+    // Sync markers are a nicety: never let them break loading the graph.
+    this._sync = await getSync(this.repo).catch(() => null);
     this.commits = await getLog(this.repo, this.scope, 0, count);
     this.done = this.commits.length < count;
     this.layout = new GraphLayout();
     const rows = this.toRows(this.commits, true);
-    this.post({ type: 'rows', mode: 'reset', keep, rows, done: this.done, head: this.head, scope: this.scope });
+    this.post({
+      type: 'rows',
+      mode: 'reset',
+      keep,
+      rows,
+      done: this.done,
+      head: this.head,
+      scope: this.scope,
+      sync: this._sync,
+    });
     if (this.lastQuery) await this.runSearch(this.lastQuery);
   }
 
@@ -397,7 +420,9 @@ export class GraphController {
       <button id="scope-all" role="radio" title="Show all branches, remotes and tags">All<span class="long"> branches</span></button>
       <button id="scope-current" role="radio" title="Show only the current branch's history">Current</button>
     </div>
+    <div class="sync" id="sync"></div>
     <span class="spacer"></span>
+    <button class="focus-chip" id="focus-chip" hidden title="Clear highlight (Esc)"></button>
     <span class="status" id="status"></span>
     <button class="icon" id="go-head" title="Go to HEAD" aria-label="Go to HEAD"><i class="codicon codicon-target"></i></button>
     <button class="icon" id="fetch" title="Fetch all remotes" aria-label="Fetch"><i class="codicon codicon-cloud-download"></i></button>
