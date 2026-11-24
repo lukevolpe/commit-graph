@@ -889,6 +889,7 @@ ${filesHtml(d)}`;
     let first = -1;
     let any = -1;
     for (let k = cur - 1; k >= 0; k--) {
+      if (state.rows[k].stash) continue;
       const ps = state.rows[k].parents;
       if (ps[0] === h) {
         if (state.rows[k].graph.col === col) return k;
@@ -938,6 +939,7 @@ ${filesHtml(d)}`;
     ['B', 'Go to branch or tag'],
     ['L', 'Highlight line'],
     ['Ctrl+C', 'Copy SHA'],
+    ['Ctrl+click', 'Compare two commits'],
     ['Ctrl+F / F3', 'Search / next match'],
     ['Esc', 'Close details or highlight'],
   ];
